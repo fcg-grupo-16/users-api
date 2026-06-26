@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-api-config
+  labels:
+    app: users-api
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  RabbitMq__Host: "rabbitmq"
+  MongoDbSettings__DatabaseName: "usersdb"
+  JwtSettings__Issuer: "FiapCloudGames"
+  JwtSettings__Audience: "FiapCloudGames"
