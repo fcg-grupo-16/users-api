@@ -143,12 +143,15 @@ public class UsuarioServiceTests
         };
         _repositoryMock.Setup(r => r.ObterTodosAsync(1, 10, It.IsAny<CancellationToken>()))
             .ReturnsAsync(usuarios);
+        _repositoryMock.Setup(r => r.ContarAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(57);
 
         var result = await _service.ListarAsync(1, 10);
 
         result.Itens.Should().HaveCount(2);
         result.Pagina.Should().Be(1);
         result.TamanhoPagina.Should().Be(10);
+        result.Total.Should().Be(57);
     }
 
     [Fact]
