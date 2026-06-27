@@ -52,9 +52,10 @@ public sealed class UsuarioService(
     public async Task<PaginacaoResponseDto<UsuarioResponseDto>> ListarAsync(int pagina, int tamanhoPagina, CancellationToken ct = default)
     {
         var usuarios = await usuarioRepository.ObterTodosAsync(pagina, tamanhoPagina, ct);
-        var itens = usuarios.Select(MapToDto);
+        var total = await usuarioRepository.ContarAsync(ct);
+        var itens = usuarios.Select(MapToDto).ToList();
 
-        return new PaginacaoResponseDto<UsuarioResponseDto>(itens, pagina, tamanhoPagina, itens.Count());
+        return new PaginacaoResponseDto<UsuarioResponseDto>(itens, pagina, tamanhoPagina, total);
     }
 
     public async Task<UsuarioResponseDto> AtualizarAsync(string id, AtualizarUsuarioRequestDto dto, CancellationToken ct = default)

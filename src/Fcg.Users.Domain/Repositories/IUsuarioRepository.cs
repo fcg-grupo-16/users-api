@@ -11,4 +11,5 @@ public interface IUsuarioRepository
     Task AtualizarAsync(Usuario usuario, CancellationToken ct = default);
     Task RemoverAsync(string id, CancellationToken ct = default);
     Task<bool> EmailExisteAsync(string email, CancellationToken ct = default);
+    Task<long> ContarAsync(CancellationToken ct = default);
 }

@@ -44,4 +44,7 @@ public sealed class UsuarioRepository(AppDbContext context) : IUsuarioRepository
 
     public async Task<bool> EmailExisteAsync(string email, CancellationToken ct = default) =>
         await context.Usuarios.AnyAsync(u => u.Email == new Email(email), ct);
+
+    public async Task<long> ContarAsync(CancellationToken ct = default) =>
+        await context.Usuarios.LongCountAsync(ct);
 }
