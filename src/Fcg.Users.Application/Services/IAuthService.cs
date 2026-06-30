@@ -5,5 +5,7 @@ namespace Fcg.Users.Application.Services;
 
 public interface IAuthService
 {
-    Task<LoginResponseDto> LoginAsync(LoginRequestDto dto, CancellationToken ct = default);
+    Task<TokenResponseDto> LoginAsync(LoginRequestDto dto, CancellationToken ct = default);
+    Task<TokenResponseDto> RefreshAsync(RefreshTokenRequestDto dto, CancellationToken ct = default);
+    Task LogoutAsync(string refreshToken, CancellationToken ct = default);
 }

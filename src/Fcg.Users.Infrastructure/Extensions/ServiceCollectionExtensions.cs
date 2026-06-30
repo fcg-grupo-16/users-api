@@ -78,6 +78,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddScoped<ITokenService, JwtTokenService>();
         services.AddScoped<IUsuarioRepository, UsuarioRepository>();
+        services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
 
         return services;
