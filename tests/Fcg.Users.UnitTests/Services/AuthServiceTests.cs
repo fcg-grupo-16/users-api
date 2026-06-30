@@ -28,8 +28,16 @@ public class AuthServiceTests
             _refreshTokenRepositoryMock.Object);
     }
 
-    private static Usuario CriarUsuario() =>
-        new("Felipe", new Email("felipe@email.com"), "$2a$12$hash", TipoUsuario.Usuario);
+    private static Usuario CriarUsuario()
+    {
+        var usuario = new Usuario("Felipe", new Email("felipe@email.com"), "$2a$12$hash", TipoUsuario.Usuario);
+
+        // Nos testes unitários o usuário não passa pelo repositório; definimos um Id válido manualmente.
+        var idProperty = typeof(Usuario).GetProperty(nameof(Usuario.Id));
+        idProperty!.SetValue(usuario, "507f1f77bcf86cd799439011");
+
+        return usuario;
+    }
 
     [Fact]
     public async Task LoginAsync_DeveRetornarToken_QuandoCredenciaisValidas()
