@@ -10,3 +10,5 @@ data:
   MongoDbSettings__DatabaseName: "usersdb"
   JwtSettings__Issuer: "FiapCloudGames"
   JwtSettings__Audience: "FiapCloudGames"
+  JwtSettings__ExpiracaoEmMinutos: "15"
+  JwtSettings__RefreshTokenExpiracaoEmDias: "7"

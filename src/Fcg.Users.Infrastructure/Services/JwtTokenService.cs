@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using Fcg.Users.Application.Interfaces;
 using Fcg.Users.Domain.Entities;
@@ -38,4 +39,12 @@ public sealed class JwtTokenService(IOptions<JwtSettings> options) : ITokenServi
     }
 
     public DateTime ObterExpiracao() => DateTime.UtcNow.AddMinutes(_settings.ExpiracaoEmMinutos);
+
+    public string GerarRefreshToken()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(64);
+        return Convert.ToBase64String(bytes);
+    }
+
+    public DateTime ObterExpiracaoRefreshToken() => DateTime.UtcNow.AddDays(_settings.RefreshTokenExpiracaoEmDias);
 }

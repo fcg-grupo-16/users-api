@@ -16,32 +16,53 @@ public class AuthServiceTests
     private readonly Mock<IUsuarioRepository> _repositoryMock = new();
     private readonly Mock<IPasswordHasher> _hasherMock = new();
     private readonly Mock<ITokenService> _tokenMock = new();
+    private readonly Mock<IRefreshTokenRepository> _refreshTokenRepositoryMock = new();
     private readonly AuthService _service;
 
     public AuthServiceTests()
     {
-        _service = new AuthService(_repositoryMock.Object, _hasherMock.Object, _tokenMock.Object);
+        _service = new AuthService(
+            _repositoryMock.Object,
+            _hasherMock.Object,
+            _tokenMock.Object,
+            _refreshTokenRepositoryMock.Object);
     }
 
-    private static Usuario CriarUsuario() =>
-        new("Felipe", new Email("felipe@email.com"), "$2a$12$hash", TipoUsuario.Usuario);
+    private static Usuario CriarUsuario()
+    {
+        var usuario = new Usuario("Felipe", new Email("felipe@email.com"), "$2a$12$hash", TipoUsuario.Usuario);
+
+        // Nos testes unitários o usuário não passa pelo repositório; definimos um Id válido manualmente.
+        var idProperty = typeof(Usuario).GetProperty(nameof(Usuario.Id));
+        idProperty!.SetValue(usuario, "507f1f77bcf86cd799439011");
+
+        return usuario;
+    }
 
     [Fact]
     public async Task LoginAsync_DeveRetornarToken_QuandoCredenciaisValidas()
     {
         var usuario = CriarUsuario();
         var dto = new LoginRequestDto("felipe@email.com", "Senha@123");
+        var expiracao = DateTime.UtcNow.AddMinutes(15);
+        var refreshExpiracao = DateTime.UtcNow.AddDays(7);
 
         _repositoryMock.Setup(r => r.ObterPorEmailAsync("felipe@email.com", It.IsAny<CancellationToken>()))
             .ReturnsAsync(usuario);
         _hasherMock.Setup(h => h.Verify("Senha@123", usuario.SenhaHash)).Returns(true);
         _tokenMock.Setup(t => t.GerarToken(usuario)).Returns("jwt-token");
-        _tokenMock.Setup(t => t.ObterExpiracao()).Returns(DateTime.UtcNow.AddMinutes(30));
+        _tokenMock.Setup(t => t.ObterExpiracao()).Returns(expiracao);
+        _tokenMock.Setup(t => t.GerarRefreshToken()).Returns("refresh-token");
+        _tokenMock.Setup(t => t.ObterExpiracaoRefreshToken()).Returns(refreshExpiracao);
 
         var result = await _service.LoginAsync(dto);
 
         result.Token.Should().Be("jwt-token");
+        result.Expiracao.Should().Be(expiracao);
         result.Tipo.Should().Be(TipoUsuario.Usuario);
+        result.RefreshToken.Should().Be("refresh-token");
+        result.RefreshTokenExpiracao.Should().Be(refreshExpiracao);
+        _refreshTokenRepositoryMock.Verify(r => r.CriarAsync(It.IsAny<RefreshToken>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -111,5 +132,66 @@ public class AuthServiceTests
 
         // Mesma mensagem para ambos — evita enumeração
         exEmail.Which.Message.Should().Be(exSenha.Which.Message);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_DeveRotacionarRefreshToken_QuandoTokenValido()
+    {
+        var usuario = CriarUsuario();
+        var dto = new RefreshTokenRequestDto("refresh-token-atual");
+        var refreshAtual = new RefreshToken(usuario.Id, "HASH_ANTIGO", DateTime.UtcNow.AddDays(1));
+        var expiracao = DateTime.UtcNow.AddMinutes(15);
+        var refreshExpiracao = DateTime.UtcNow.AddDays(7);
+
+        _refreshTokenRepositoryMock
+            .Setup(r => r.ObterPorTokenHashAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refreshAtual);
+        _repositoryMock.Setup(r => r.ObterPorIdAsync(usuario.Id, It.IsAny<CancellationToken>())).ReturnsAsync(usuario);
+        _tokenMock.Setup(t => t.GerarToken(usuario)).Returns("novo-jwt");
+        _tokenMock.Setup(t => t.ObterExpiracao()).Returns(expiracao);
+        _tokenMock.Setup(t => t.GerarRefreshToken()).Returns("novo-refresh");
+        _tokenMock.Setup(t => t.ObterExpiracaoRefreshToken()).Returns(refreshExpiracao);
+
+        var result = await _service.RefreshAsync(dto);
+
+        result.Token.Should().Be("novo-jwt");
+        result.RefreshToken.Should().Be("novo-refresh");
+        result.Expiracao.Should().Be(expiracao);
+        result.RefreshTokenExpiracao.Should().Be(refreshExpiracao);
+        _refreshTokenRepositoryMock.Verify(r => r.RevogarAsync(refreshAtual, It.IsAny<CancellationToken>()), Times.Once);
+        _refreshTokenRepositoryMock.Verify(r => r.CriarAsync(It.IsAny<RefreshToken>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_DeveLancarExcecao_QuandoTokenRevogadoOuExpirado()
+    {
+        var usuario = CriarUsuario();
+        var dto = new RefreshTokenRequestDto("refresh-token-revogado");
+        var refreshRevogado = new RefreshToken(usuario.Id, "HASH_REVOGADO", DateTime.UtcNow.AddDays(1));
+        refreshRevogado.Revogar();
+
+        _refreshTokenRepositoryMock
+            .Setup(r => r.ObterPorTokenHashAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refreshRevogado);
+
+        var act = () => _service.RefreshAsync(dto);
+
+        await act.Should().ThrowAsync<CredenciaisInvalidasException>();
+        _refreshTokenRepositoryMock.Verify(r => r.RevogarAsync(It.IsAny<RefreshToken>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LogoutAsync_DeveRevogarRefreshToken_QuandoAtivo()
+    {
+        var usuario = CriarUsuario();
+        var refresh = new RefreshToken(usuario.Id, "HASH_LOGOUT", DateTime.UtcNow.AddDays(1));
+
+        _refreshTokenRepositoryMock
+            .Setup(r => r.ObterPorTokenHashAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refresh);
+
+        await _service.LogoutAsync("refresh-token");
+
+        _refreshTokenRepositoryMock.Verify(r => r.RevogarAsync(refresh, It.IsAny<CancellationToken>()), Times.Once);
     }
 }
