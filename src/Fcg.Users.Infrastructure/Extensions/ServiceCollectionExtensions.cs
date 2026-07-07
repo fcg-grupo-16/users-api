@@ -28,6 +28,10 @@ public static class ServiceCollectionExtensions
         services.Configure<MongoDbSettings>(configuration.GetSection(MongoDbSettings.SectionName));
 
         var mongoClient = new MongoClient(mongoSettings.ConnectionString);
+        var mongoDatabase = mongoClient.GetDatabase(mongoSettings.DatabaseName);
+
+        services.AddSingleton<IMongoClient>(mongoClient);
+        services.AddSingleton(mongoDatabase);
 
         services.AddDbContext<AppDbContext>(options =>
             options.UseMongoDB(mongoClient, mongoSettings.DatabaseName));
@@ -96,6 +100,15 @@ public static class ServiceCollectionExtensions
     {
         services.AddMassTransit(x =>
         {
+            x.AddMongoDbOutbox(o =>
+            {
+                o.QueryDelay = TimeSpan.FromSeconds(5);
+                o.ClientFactory(provider => provider.GetRequiredService<IMongoClient>());
+                o.DatabaseFactory(provider => provider.GetRequiredService<IMongoDatabase>());
+                o.DuplicateDetectionWindow = TimeSpan.FromSeconds(30);
+                o.UseBusOutbox();
+            });
+
             x.UsingRabbitMq((ctx, cfg) =>
             {
                 var host = configuration["RabbitMq:Host"] ?? "localhost";

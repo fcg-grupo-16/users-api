@@ -98,6 +98,23 @@ Dessa forma, a Application publica eventos (como o `UserCreatedEvent`) sem conhe
 services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
 ```
 
+### Transactional Outbox com MongoDB
+
+Para evitar o problema de *dual-write* entre MongoDB e RabbitMQ, o cadastro de usuário usa o **MongoDB Outbox** oficial do MassTransit (`MassTransit.MongoDb`).
+
+O fluxo de criação funciona assim:
+
+1. o `UsuarioService` adiciona o usuário sem salvar imediatamente;
+2. o `IPublishEndpoint` publica o `UserCreatedEvent` no mesmo escopo do request;
+3. o repositório inicia uma transação MongoDB usando `MongoDbContext` do MassTransit;
+4. o documento do usuário é inserido na coleção `usuarios` usando a mesma sessão;
+5. o commit da transação confirma **o usuário e a mensagem de outbox**;
+6. o delivery service do MassTransit publica a mensagem pendente no RabbitMQ.
+
+Com isso, se o broker estiver indisponível no momento do cadastro, o usuário continua sendo persistido e a mensagem fica armazenada nas coleções de outbox (`outbox.messages` e `outbox.states`) até a reconexão do RabbitMQ.
+
+> Implementação importante: no cenário MongoDB, a confirmação da unidade transacional **não** acontece via `DbContext.SaveChanges()` do provider EF do Mongo. O commit é feito pela transação do `MongoDbContext` do MassTransit.
+
 ---
 
 ## 4. Pré-requisitos
@@ -110,8 +127,13 @@ services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
 **MongoDB:**
 
 ```bash
-docker run -d --name fcg-mongo -p 27017:27017 mongo:7
+docker run -d --name fcg-mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+docker exec fcg-mongo mongosh --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'host.docker.internal:27017'}]})"
 ```
+
+> O UsersAPI usa o MongoDB Outbox oficial do MassTransit (`MassTransit.MongoDb`) com `AddMongoDbOutbox(...)` e `UseBusOutbox()`, conforme a documentacao do framework para MongoDB.
+>
+> Para cenarios que dependem de transacoes MongoDB, valide o ambiente com replica set habilitado. Em standalone, a API pode iniciar normalmente, mas garantias transacionais mais fortes dependem do suporte do ambiente Mongo.
 
 **RabbitMQ (com painel de administração em http://localhost:15672 — guest/guest):**
 
@@ -128,7 +150,7 @@ A configuração padrão vive em `src/Fcg.Users.Api/appsettings.json`. Qualquer 
 | Variável                              | Descrição                                                       | Default                                  |
 |---------------------------------------|-----------------------------------------------------------------|------------------------------------------|
 | `ASPNETCORE_ENVIRONMENT`              | Ambiente de execução (`Development` habilita o Swagger).        | `Production` (no container)              |
-| `MongoDbSettings__ConnectionString`   | String de conexão do MongoDB.                                   | `mongodb://localhost:27017`              |
+| `MongoDbSettings__ConnectionString`   | String de conexão do MongoDB.                                   | `mongodb://localhost:27017/?replicaSet=rs0` |
 | `MongoDbSettings__DatabaseName`       | Nome do database.                                               | `usersdb`                                |
 | `JwtSettings__SecretKey`              | Chave secreta para assinar/validar o JWT (mín. 256 bits para HMAC-SHA256). **Deve ser idêntica à dos demais serviços que validam o token.** | `OVERRIDE_VIA_ENV_VAR_EM_PRODUCAO`       |
 | `JwtSettings__Issuer`                 | Emissor do token.                                               | `FiapCloudGames`                         |
@@ -193,7 +215,7 @@ Use essas credenciais no endpoint `POST /api/v1/auth/login` para obter um token 
    ```bash
    docker run -d --name users-api -p 8081:8080 \
      -e ASPNETCORE_ENVIRONMENT=Development \
-     -e MongoDbSettings__ConnectionString="mongodb://host.docker.internal:27017" \
+       -e MongoDbSettings__ConnectionString="mongodb://host.docker.internal:27017/?replicaSet=rs0" \
      -e MongoDbSettings__DatabaseName="usersdb" \
      -e JwtSettings__SecretKey="FiapCloudGames_Demo_SecretKey_Com_Pelo_Menos_256_Bits_Para_HMAC_SHA256!" \
      -e RabbitMq__Host="host.docker.internal" \
@@ -300,6 +322,32 @@ A suíte (`tests/Fcg.Users.UnitTests`) cobre:
 - **Services** — casos de uso `AuthService` (login/JWT) e `UsuarioService` (CRUD e publicação de evento).
 - **Validators** — `CriarUsuarioValidator`, `AtualizarUsuarioValidator` e `LoginValidator`.
 - **ValueObjects** — `Email` e `Senha`.
+
+### Teste manual de resiliência do outbox
+
+Com o ecossistema completo em execução e o MongoDB em replica set, o comportamento esperado é:
+
+1. parar o RabbitMQ;
+2. cadastrar um usuário com `POST /api/v1/usuarios`;
+3. receber `201 Created` mesmo sem broker;
+4. observar no MongoDB documentos temporários em `outbox.messages` e `outbox.states`;
+5. religar o RabbitMQ;
+6. observar o `NotificationsAPI` consumir o `UserCreatedEvent` e registrar o e-mail de boas-vindas;
+7. confirmar que `outbox.messages` e `outbox.states` voltaram para zero.
+
+Exemplo usando o ambiente de orquestração:
+
+```bash
+docker stop fcg-rabbitmq
+
+curl -i -X POST http://localhost:8081/api/v1/usuarios \
+   -H "Content-Type: application/json" \
+   -d '{"nome":"Maria","email":"maria@email.com","senha":"Senha@123"}'
+
+docker start fcg-rabbitmq
+docker logs fcg-notifications-api --tail 50
+docker exec fcg-mongodb mongosh "mongodb://localhost:27017/usersdb?directConnection=true" --quiet --eval "db.getCollectionNames().forEach(c => print(c + ':' + db.getCollection(c).countDocuments()))"
+```
 
 ---
 

@@ -27,7 +27,7 @@ public sealed class UsuarioService(
         var senhaHash = passwordHasher.Hash(senha.Valor);
 
         var usuario = new Usuario(dto.Nome, email, senhaHash);
-        await usuarioRepository.CriarAsync(usuario, ct);
+        await usuarioRepository.AdicionarSemSalvarAsync(usuario, ct);
 
         await eventPublisher.PublishAsync(
             new UserCreatedEvent
@@ -37,6 +37,8 @@ public sealed class UsuarioService(
                 Email = usuario.Email.Endereco
             },
             ct);
+
+        await usuarioRepository.SalvarAlteracoesAsync(ct);
 
         return MapToDto(usuario);
     }

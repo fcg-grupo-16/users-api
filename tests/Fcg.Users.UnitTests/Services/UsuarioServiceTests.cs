@@ -37,7 +37,8 @@ public class UsuarioServiceTests
         result.Nome.Should().Be("Felipe");
         result.Email.Should().Be("felipe@email.com");
         result.Tipo.Should().Be(TipoUsuario.Usuario);
-        _repositoryMock.Verify(r => r.CriarAsync(It.IsAny<Usuario>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repositoryMock.Verify(r => r.AdicionarSemSalvarAsync(It.IsAny<Usuario>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repositoryMock.Verify(r => r.SalvarAlteracoesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -53,6 +54,33 @@ public class UsuarioServiceTests
         _eventPublisherMock.Verify(p => p.PublishAsync(
             It.Is<UserCreatedEvent>(e => e.Nome == "Felipe" && e.Email == "felipe@email.com"),
             It.IsAny<CancellationToken>()), Times.Once);
+        _repositoryMock.Verify(r => r.SalvarAlteracoesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CriarAsync_DeveExecutarFluxoAddPublishSave_EmOrdem()
+    {
+        var dto = new CriarUsuarioRequestDto("Felipe", "felipe@email.com", "Senha@123");
+        _repositoryMock.Setup(r => r.EmailExisteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _hasherMock.Setup(h => h.Hash(It.IsAny<string>())).Returns("hashed_password");
+
+        var sequence = new MockSequence();
+        _repositoryMock.InSequence(sequence)
+            .Setup(r => r.AdicionarSemSalvarAsync(It.IsAny<Usuario>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _eventPublisherMock.InSequence(sequence)
+            .Setup(p => p.PublishAsync(It.IsAny<UserCreatedEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _repositoryMock.InSequence(sequence)
+            .Setup(r => r.SalvarAlteracoesAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _service.CriarAsync(dto);
+
+        _repositoryMock.Verify(r => r.AdicionarSemSalvarAsync(It.IsAny<Usuario>(), It.IsAny<CancellationToken>()), Times.Once);
+        _eventPublisherMock.Verify(p => p.PublishAsync(It.IsAny<UserCreatedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repositoryMock.Verify(r => r.SalvarAlteracoesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -67,6 +95,7 @@ public class UsuarioServiceTests
         await act.Should().ThrowAsync<ConflitoDeDadosException>();
         _eventPublisherMock.Verify(p => p.PublishAsync(
             It.IsAny<UserCreatedEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+        _repositoryMock.Verify(r => r.SalvarAlteracoesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
