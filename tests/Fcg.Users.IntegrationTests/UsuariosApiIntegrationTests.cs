@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Fcg.Users.IntegrationTests.Infrastructure;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using RabbitMQ.Client;
 
@@ -149,6 +150,65 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
     }
 
     [Fact]
+    public async Task Login_AcimaDoLimite_DeveRetornar429()
+    {
+        using var rateLimitedFactory = CreateRateLimitedFactory(permitLimit: 5, windowSeconds: 60);
+        using var client = rateLimitedFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        for (var tentativa = 1; tentativa <= 5; tentativa++)
+        {
+            var response = await PostLoginAsync(client, "naoexiste@email.com", "errada");
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        var blockedResponse = await PostLoginAsync(client, "naoexiste@email.com", "errada");
+        blockedResponse.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+    }
+
+    [Fact]
+    public async Task Login_DentroDoLimite_DeveFuncionarNormalmente()
+    {
+        using var rateLimitedFactory = CreateRateLimitedFactory(permitLimit: 5, windowSeconds: 60);
+        using var client = rateLimitedFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await PostLoginAsync(client, "admin@fcg.com", "Admin@123456");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Health_NaoDeveSerAfetadoPelaPoliticaDeLogin()
+    {
+        using var rateLimitedFactory = CreateRateLimitedFactory(permitLimit: 2, windowSeconds: 60);
+        using var client = rateLimitedFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        for (var tentativa = 1; tentativa <= 3; tentativa++)
+        {
+            var response = await PostLoginAsync(client, "naoexiste@email.com", "errada");
+
+            if (tentativa <= 2)
+            {
+                response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            }
+            else
+            {
+                response.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+            }
+        }
+
+        var healthResponse = await client.GetAsync("/health");
+        healthResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task CriarUsuario_DevePublicar_UserCreatedEvent_NoRabbitMq()
     {
         await using var connection = await CreateRabbitConnectionAsync();
@@ -265,6 +325,24 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         };
 
         return await connectionFactory.CreateConnectionAsync();
+    }
+
+    private WebApplicationFactory<Program> CreateRateLimitedFactory(int permitLimit, int windowSeconds)
+    {
+        return factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("RateLimiting:Login:PermitLimit", permitLimit.ToString());
+            builder.UseSetting("RateLimiting:Login:WindowSeconds", windowSeconds.ToString());
+        });
+    }
+
+    private static Task<HttpResponseMessage> PostLoginAsync(HttpClient client, string email, string senha)
+    {
+        return client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            email,
+            senha
+        });
     }
 
     private async Task<IConnection> CreateRabbitConnectionWithRetryAsync(TimeSpan timeout)
