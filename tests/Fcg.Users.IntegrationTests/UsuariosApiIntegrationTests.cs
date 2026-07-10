@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using Fcg.Users.IntegrationTests.Infrastructure;
@@ -194,6 +193,54 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         emailNode.GetString().Should().Be(email);
     }
 
+    [Fact]
+    public async Task CriarUsuario_ComRabbitIndisponivel_DeveRetornar201_E_PublicarEvento_AposRetornoDoBroker()
+    {
+        var queueName = $"users-outbox-it-{Guid.NewGuid():N}";
+        const string exchangeName = "Fcg.Contracts.Events:UserCreatedEvent";
+
+        await using (var setupConnection = await CreateRabbitConnectionAsync())
+        await using (var setupChannel = await setupConnection.CreateChannelAsync())
+        {
+            await setupChannel.ExchangeDeclareAsync(exchangeName, ExchangeType.Fanout, durable: true, autoDelete: false);
+            await setupChannel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: true);
+            await setupChannel.QueueBindAsync(queueName, exchangeName, routingKey: string.Empty);
+        }
+
+        await factory.StopRabbitMqAsync();
+
+        var email = $"outbox-{Guid.NewGuid():N}@it.local";
+
+        var cadastro = await _client.PostAsJsonAsync("/api/v1/usuarios", new
+        {
+            nome = "Usuario Outbox",
+            email,
+            senha = "Senha@1234"
+        });
+
+        cadastro.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        await factory.StartRabbitMqAsync();
+
+        await using var assertConnection = await CreateRabbitConnectionWithRetryAsync(TimeSpan.FromSeconds(30));
+        await using var assertChannel = await assertConnection.CreateChannelAsync();
+
+        var envelope = await WaitForMessageAsync(assertChannel, queueName, TimeSpan.FromSeconds(60));
+
+        envelope.Should().NotBeNull();
+        envelope!.RootElement.GetProperty("messageType")
+            .EnumerateArray()
+            .Select(x => x.GetString())
+            .Should().Contain("urn:message:Fcg.Contracts.Events:UserCreatedEvent");
+
+        var messageNode = envelope.RootElement.GetProperty("message");
+        var emailNode = messageNode.TryGetProperty("email", out var emailCamel)
+            ? emailCamel
+            : messageNode.GetProperty("Email");
+
+        emailNode.GetString().Should().Be(email);
+    }
+
     private async Task<TokenResponse> LoginAsync(string email, string senha)
     {
         var response = await _client.PostAsJsonAsync("/api/v1/auth/login", new
@@ -218,6 +265,27 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         };
 
         return await connectionFactory.CreateConnectionAsync();
+    }
+
+    private async Task<IConnection> CreateRabbitConnectionWithRetryAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        Exception? lastError = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                return await CreateRabbitConnectionAsync();
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                await Task.Delay(500);
+            }
+        }
+
+        throw new TimeoutException("Não foi possível conectar ao RabbitMQ dentro do tempo esperado.", lastError);
     }
 
     private static async Task<JsonDocument?> WaitForMessageAsync(IChannel channel, string queueName, TimeSpan timeout)

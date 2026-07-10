@@ -32,6 +32,10 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
 
     public string RabbitPasswordValue => RabbitPassword;
 
+    public Task StopRabbitMqAsync(CancellationToken ct = default) => _rabbit.StopAsync(ct);
+
+    public Task StartRabbitMqAsync(CancellationToken ct = default) => _rabbit.StartAsync(ct);
+
     public async Task InitializeAsync()
     {
         await _mongo.StartAsync();
