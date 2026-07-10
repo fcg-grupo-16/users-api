@@ -163,6 +163,20 @@ public class UsuarioServiceTests
     }
 
     [Fact]
+    public async Task ObterPorIdAsync_DeveLancarExcecao_QuandoUsuarioInativo()
+    {
+        var usuario = new Usuario("Felipe", new Email("felipe@email.com"), "hash");
+        usuario.Desativar();
+
+        _repositoryMock.Setup(r => r.ObterPorIdAsync("id", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(usuario);
+
+        var act = () => _service.ObterPorIdAsync("id");
+
+        await act.Should().ThrowAsync<EntidadeNaoEncontradaException>();
+    }
+
+    [Fact]
     public async Task ListarAsync_DeveRetornarPaginacao()
     {
         var usuarios = new List<Usuario>

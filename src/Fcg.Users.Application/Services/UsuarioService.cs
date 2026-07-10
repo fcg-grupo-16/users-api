@@ -48,6 +48,11 @@ public sealed class UsuarioService(
         var usuario = await usuarioRepository.ObterPorIdAsync(id, ct)
             ?? throw new EntidadeNaoEncontradaException("Usuário", id);
 
+        if (!usuario.Ativo)
+        {
+            throw new EntidadeNaoEncontradaException("Usuário", id);
+        }
+
         return MapToDto(usuario);
     }
 
