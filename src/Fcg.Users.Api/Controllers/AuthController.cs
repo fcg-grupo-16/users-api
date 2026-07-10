@@ -5,6 +5,7 @@ using Fcg.Users.Application.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Fcg.Users.Api.Controllers;
 
@@ -29,9 +30,11 @@ public sealed class AuthController(
     /// <response code="401">Credenciais inválidas.</response>
     /// <response code="422">Dados de validação inválidos.</response>
     [HttpPost("login")]
+    [EnableRateLimiting("login")]
     [ProducesResponseType(typeof(TokenResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login([FromBody] LoginRequestDto dto, CancellationToken ct)
     {
         await loginValidator.ValidarAsync(dto, ct);
