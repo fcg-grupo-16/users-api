@@ -21,6 +21,15 @@ jobs:
       - name: Restore
         run: dotnet restore
 
+      - name: SCA - detectar pacotes vulneráveis (High/Critical)
+        shell: bash
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vuln.txt
+          if grep -qiE 'High|Critical' vuln.txt; then
+            echo "::error::Dependências vulneráveis (High/Critical) encontradas"
+            exit 1
+          fi
+
       - name: Build
         run: dotnet build -c Release --no-restore
 
