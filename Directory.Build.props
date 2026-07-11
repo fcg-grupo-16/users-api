@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <!-- Enable NuGet vulnerability auditing, including transitive dependencies -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
+
+    <!-- Treat High/Critical vulnerability warnings as build errors -->
+    <WarningsAsErrors>$(WarningsAsErrors);NU1903;NU1904</WarningsAsErrors>
+  </PropertyGroup>
+</Project>
