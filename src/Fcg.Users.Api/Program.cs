@@ -5,6 +5,7 @@ using Fcg.Users.Application.Validators;
 using Fcg.Users.Infrastructure.Extensions;
 using Fcg.Users.Infrastructure.Seed;
 using FluentValidation;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -31,7 +32,27 @@ try
     builder.Services.AddApplicationServices();
     builder.Services.AddMessaging(builder.Configuration);
 
-    builder.Services.AddHealthChecks();
+    builder.Services.AddHealthChecks()
+        .AddMongoDb(
+            dbFactory: static sp => sp.GetRequiredService<MongoDB.Driver.IMongoDatabase>(),
+            name: "mongodb",
+            tags: ["ready"])
+        .AddRabbitMQ(
+            factory: static sp =>
+            {
+                var configuration = sp.GetRequiredService<IConfiguration>();
+
+                var factory = new RabbitMQ.Client.ConnectionFactory
+                {
+                    HostName = configuration["RabbitMq:Host"] ?? "localhost",
+                    UserName = configuration["RabbitMq:Username"] ?? "guest",
+                    Password = configuration["RabbitMq:Password"] ?? "guest"
+                };
+
+                return factory.CreateConnectionAsync();
+            },
+            name: "rabbitmq",
+            tags: ["ready"]);
 
     var loginPermitLimit = Math.Max(
         1,
@@ -102,6 +123,19 @@ try
     app.UseAuthorization();
     app.UseRateLimiter();
     app.MapControllers();
+    // Liveness: valida apenas se o processo responde HTTP.
+    app.MapHealthChecks("/health/live", new HealthCheckOptions
+    {
+        Predicate = _ => false
+    });
+
+    // Readiness: valida dependências externas necessárias para atender requisições.
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("ready")
+    });
+
+    // Endpoint legado/agregado para compatibilidade.
     app.MapHealthChecks("/health");
 
     try

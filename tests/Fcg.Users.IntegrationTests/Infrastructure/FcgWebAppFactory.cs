@@ -14,7 +14,6 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
     private string? _mongoConnectionString;
 
     private readonly MongoDbContainer _mongo = new MongoDbBuilder("mongo:7")
-        .WithPortBinding(27017, 27017)
         .WithReplicaSet("rs0")
         .Build();
 
@@ -41,7 +40,7 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         await _mongo.StartAsync();
         await _rabbit.StartAsync();
 
-        _mongoConnectionString = "mongodb://mongo:mongo@localhost:27017/?authSource=admin&replicaSet=rs0";
+        _mongoConnectionString = _mongo.GetConnectionString();
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
