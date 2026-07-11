@@ -39,7 +39,8 @@ Sempre que um novo usuário é criado, o serviço **publica** o evento **`UserCr
 - **JWT** com **HMAC-SHA256** (autenticação)
 - **BCrypt** (hash de senhas)
 - **Swagger / OpenAPI** (somente em Development)
-- **xUnit** (testes unitários)
+- **Rate limiting** nativo do ASP.NET Core (janela fixa) na rota de login
+- **xUnit** (testes unitários) + **Testcontainers** e `WebApplicationFactory` (testes de integração)
 
 ---
 
@@ -55,7 +56,8 @@ users-api/
 │   ├── Fcg.Users.Infrastructure/   # MongoDB (Persistence/Repositories), JWT, BCrypt, Messaging, Seed
 │   └── Fcg.Users.Api/              # Controllers, Middlewares, Extensions (DI), Program.cs
 ├── tests/
-│   └── Fcg.Users.UnitTests/        # Testes de Entities, Services, Validators, ValueObjects
+│   ├── Fcg.Users.UnitTests/        # Testes de Entities, Services, Validators, ValueObjects
+│   └── Fcg.Users.IntegrationTests/ # Testes de API ponta a ponta (WebApplicationFactory + Testcontainers)
 ├── k8s/                            # Manifests Kubernetes
 ├── Dockerfile
 ├── UsersApi.sln
@@ -261,9 +263,15 @@ Base path: `/api/v1`. Documentação interativa via Swagger (em Development).
 
 ### Autenticação — `/api/v1/auth`
 
-| Método | Rota                  | Auth        | Descrição                                              |
-|--------|-----------------------|-------------|--------------------------------------------------------|
-| POST   | `/api/v1/auth/login`  | Pública     | Autentica o usuário e retorna o token JWT + expiração. |
+| Método | Rota                    | Auth        | Descrição                                                                                          |
+|--------|-------------------------|-------------|----------------------------------------------------------------------------------------------------|
+| POST   | `/api/v1/auth/login`    | Pública     | Autentica o usuário e retorna o token de acesso (JWT) + refresh token, com suas expirações. **Rota com rate limiting** (janela fixa). |
+| POST   | `/api/v1/auth/refresh`  | Pública     | Troca um refresh token válido por um novo par token de acesso + refresh token.                     |
+| POST   | `/api/v1/auth/logout`   | Autenticado | Revoga o refresh token do usuário autenticado.                                                     |
+
+> **Rate limiting no login:** por padrão, 5 tentativas por janela de 60s (configurável via
+> `RateLimiting__Login__PermitLimit` e `RateLimiting__Login__WindowSeconds`); ao exceder, a API
+> responde `429 Too Many Requests`.
 
 ### Usuários — `/api/v1/usuarios`
 
@@ -310,18 +318,23 @@ curl "http://localhost:8081/api/v1/usuarios?pagina=1&tamanhoPagina=10" \
 
 ## 10. Testes
 
-Execute toda a suíte de testes unitários:
+Execute toda a suíte de testes:
 
 ```bash
 dotnet test
 ```
 
-A suíte (`tests/Fcg.Users.UnitTests`) cobre:
+**Testes unitários** (`tests/Fcg.Users.UnitTests`) cobrem:
 
 - **Entities** — regras de negócio da entidade `Usuario`.
 - **Services** — casos de uso `AuthService` (login/JWT) e `UsuarioService` (CRUD e publicação de evento).
 - **Validators** — `CriarUsuarioValidator`, `AtualizarUsuarioValidator` e `LoginValidator`.
 - **ValueObjects** — `Email` e `Senha`.
+
+**Testes de integração** (`tests/Fcg.Users.IntegrationTests`) exercitam a API ponta a ponta com
+`WebApplicationFactory<Program>` e **Testcontainers** (MongoDB em replica set + RabbitMQ), cobrindo o
+fluxo real de cadastro/autenticação, o rate limiting do login e a publicação do evento via outbox
+(inclusive com o RabbitMQ indisponível). **Requer Docker em execução** para subir os containers.
 
 ### Teste manual de resiliência do outbox
 
