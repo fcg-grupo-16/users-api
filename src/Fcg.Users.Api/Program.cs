@@ -32,24 +32,30 @@ try
     builder.Services.AddApplicationServices();
     builder.Services.AddMessaging(builder.Configuration);
 
+    // Conexão RabbitMQ ÚNICA e reutilizada pelo health check. Antes o AddRabbitMQ abria uma conexão
+    // nova a cada readiness sem fechá-la (leak que saturava o broker). Aqui a factory cria a conexão
+    // UMA vez (??=) e a reusa em todas as checagens — com auto-recovery para reconectar quando o
+    // broker volta. Lazy e assíncrona (sem sync-over-async, sem bloquear o startup): se o broker
+    // estiver fora, a criação falha, o check reporta 503, e uma tentativa futura reconecta (200).
+    RabbitMQ.Client.IConnection? healthRabbitConnection = null;
+
     builder.Services.AddHealthChecks()
         .AddMongoDb(
             dbFactory: static sp => sp.GetRequiredService<MongoDB.Driver.IMongoDatabase>(),
             name: "mongodb",
             tags: ["ready"])
         .AddRabbitMQ(
-            factory: static sp =>
+            factory: async sp =>
             {
                 var configuration = sp.GetRequiredService<IConfiguration>();
-
-                var factory = new RabbitMQ.Client.ConnectionFactory
+                healthRabbitConnection ??= await new RabbitMQ.Client.ConnectionFactory
                 {
                     HostName = configuration["RabbitMq:Host"] ?? "localhost",
                     UserName = configuration["RabbitMq:Username"] ?? "guest",
-                    Password = configuration["RabbitMq:Password"] ?? "guest"
-                };
-
-                return factory.CreateConnectionAsync();
+                    Password = configuration["RabbitMq:Password"] ?? "guest",
+                    AutomaticRecoveryEnabled = true
+                }.CreateConnectionAsync();
+                return healthRabbitConnection;
             },
             name: "rabbitmq",
             tags: ["ready"]);
