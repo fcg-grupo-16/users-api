@@ -33,10 +33,13 @@ try
     builder.Services.AddMessaging(builder.Configuration);
 
     // Conexão RabbitMQ ÚNICA e reutilizada pelo health check. Antes o AddRabbitMQ abria uma conexão
-    // nova a cada readiness sem fechá-la (leak que saturava o broker). Aqui a factory cria a conexão
-    // UMA vez (??=) e a reusa em todas as checagens — com auto-recovery para reconectar quando o
-    // broker volta. Lazy e assíncrona (sem sync-over-async, sem bloquear o startup): se o broker
-    // estiver fora, a criação falha, o check reporta 503, e uma tentativa futura reconecta (200).
+    // nova a cada readiness sem fechá-la (leak que saturava o broker). A factory cria a conexão UMA
+    // vez e a reusa em todas as checagens — com auto-recovery para reconectar quando o broker volta.
+    // O lock (double-checked) evita a criação concorrente se dois probes chegarem simultaneamente;
+    // se a conexão estiver fechada (recovery esgotado) ela é descartada e recriada na próxima check.
+    // Lazy e assíncrona (sem sync-over-async, sem bloquear o startup): se o broker estiver fora, a
+    // criação falha, o check reporta 503, e uma tentativa futura reconecta (200).
+    var healthRabbitLock = new SemaphoreSlim(1, 1);
     RabbitMQ.Client.IConnection? healthRabbitConnection = null;
 
     builder.Services.AddHealthChecks()
@@ -47,15 +50,36 @@ try
         .AddRabbitMQ(
             factory: async sp =>
             {
+                if (healthRabbitConnection?.IsOpen == true)
+                    return healthRabbitConnection;
+
                 var configuration = sp.GetRequiredService<IConfiguration>();
-                healthRabbitConnection ??= await new RabbitMQ.Client.ConnectionFactory
+                await healthRabbitLock.WaitAsync();
+                try
                 {
-                    HostName = configuration["RabbitMq:Host"] ?? "localhost",
-                    UserName = configuration["RabbitMq:Username"] ?? "guest",
-                    Password = configuration["RabbitMq:Password"] ?? "guest",
-                    AutomaticRecoveryEnabled = true
-                }.CreateConnectionAsync();
-                return healthRabbitConnection;
+                    if (healthRabbitConnection?.IsOpen == true)
+                        return healthRabbitConnection;
+
+                    // A conexão anterior está fechada (recovery esgotado) — descarta antes de recriar.
+                    if (healthRabbitConnection is not null)
+                    {
+                        await healthRabbitConnection.DisposeAsync();
+                        healthRabbitConnection = null;
+                    }
+
+                    healthRabbitConnection = await new RabbitMQ.Client.ConnectionFactory
+                    {
+                        HostName = configuration["RabbitMq:Host"] ?? "localhost",
+                        UserName = configuration["RabbitMq:Username"] ?? "guest",
+                        Password = configuration["RabbitMq:Password"] ?? "guest",
+                        AutomaticRecoveryEnabled = true
+                    }.CreateConnectionAsync();
+                    return healthRabbitConnection;
+                }
+                finally
+                {
+                    healthRabbitLock.Release();
+                }
             },
             name: "rabbitmq",
             tags: ["ready"]);
