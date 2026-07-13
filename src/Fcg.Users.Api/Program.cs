@@ -177,13 +177,12 @@ try
         Log.Warning(ex, "Seed de dados falhou. A aplicação continuará sem dados iniciais.");
     }
 
-    app.Lifetime.ApplicationStopped.Register(() =>
-    {
-        healthRabbitConnection?.Dispose();
-        healthRabbitLock.Dispose();
-    });
-
     await app.RunAsync();
+
+    // Libera recursos da conexão de health check após o host encerrar (sem concorrência possível).
+    if (healthRabbitConnection is not null)
+        await healthRabbitConnection.DisposeAsync();
+    healthRabbitLock.Dispose();
 }
 catch (Exception ex) when (ex is not HostAbortedException)
 {
