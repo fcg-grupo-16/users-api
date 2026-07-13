@@ -177,6 +177,12 @@ try
         Log.Warning(ex, "Seed de dados falhou. A aplicação continuará sem dados iniciais.");
     }
 
+    app.Lifetime.ApplicationStopped.Register(() =>
+    {
+        healthRabbitConnection?.Dispose();
+        healthRabbitLock.Dispose();
+    });
+
     await app.RunAsync();
 }
 catch (Exception ex) when (ex is not HostAbortedException)
