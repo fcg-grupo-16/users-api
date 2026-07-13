@@ -52,31 +52,34 @@ try
         .AddRabbitMQ(
             factory: async sp =>
             {
-                if (healthRabbitConnection?.IsOpen == true)
-                    return healthRabbitConnection;
+                var current = Volatile.Read(ref healthRabbitConnection);
+                if (current?.IsOpen == true)
+                    return current;
 
                 var configuration = sp.GetRequiredService<IConfiguration>();
                 await healthRabbitLock.WaitAsync();
                 try
                 {
-                    if (healthRabbitConnection?.IsOpen == true)
-                        return healthRabbitConnection;
+                    current = Volatile.Read(ref healthRabbitConnection);
+                    if (current?.IsOpen == true)
+                        return current;
 
                     // A conexão anterior está fechada (recovery esgotado) — descarta antes de recriar.
-                    if (healthRabbitConnection is not null)
+                    if (current is not null)
                     {
-                        await healthRabbitConnection.DisposeAsync();
-                        healthRabbitConnection = null;
+                        await current.DisposeAsync();
+                        Volatile.Write(ref healthRabbitConnection, null);
                     }
 
-                    healthRabbitConnection = await new RabbitMQ.Client.ConnectionFactory
+                    var created = await new RabbitMQ.Client.ConnectionFactory
                     {
                         HostName = configuration["RabbitMq:Host"] ?? "localhost",
                         UserName = configuration["RabbitMq:Username"] ?? "guest",
                         Password = configuration["RabbitMq:Password"] ?? "guest",
                         AutomaticRecoveryEnabled = true
                     }.CreateConnectionAsync();
-                    return healthRabbitConnection;
+                    Volatile.Write(ref healthRabbitConnection, created);
+                    return created;
                 }
                 finally
                 {
