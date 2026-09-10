@@ -316,7 +316,40 @@ curl "http://localhost:8081/api/v1/usuarios?pagina=1&tamanhoPagina=10" \
 
 ---
 
-## 10. Testes
+## 10. Observabilidade
+
+O serviço é instrumentado com **OpenTelemetry** para métricas e traces (Fase 3).
+
+### Métricas (Prometheus)
+
+- Expostas em `GET /metrics`, no formato de exposição do Prometheus (texto, não JSON).
+- **Não são autenticadas e não são expostas no API Gateway** — apenas o Prometheus, de dentro do cluster/rede Docker, deve alcançar essa rota.
+- A métrica principal é o histograma `http_server_request_duration_seconds` (publicado nativamente pelo ASP.NET Core), com os labels `http_response_status_code`, `http_request_method` e `http_route` — de onde vêm as três métricas exigidas pelo desafio: latência (via `histogram_quantile`), contagem total (série `_count`) e contagem por status code (label).
+- Métricas de runtime (`process_*`, `dotnet_*`) e de infraestrutura (Kestrel, roteamento) também são publicadas.
+
+Para ver as métricas localmente:
+
+```bash
+curl -s http://localhost:5000/metrics | head -40
+```
+
+### Traces (OTLP)
+
+- Exportados por **OTLP** para o Jaeger, incluindo a propagação de contexto para o RabbitMQ (nativa do MassTransit 8 — publisher e consumer aparecem no mesmo trace distribuído).
+- Requisições a `/health*` e `/metrics` são filtradas (não geram trace), pois são chamadas a cada poucos segundos pelas probes e pelo Prometheus.
+- `TraceId`/`SpanId` são enriquecidos no contexto do Serilog, permitindo pular de um span lento no Jaeger direto para os logs daquele request.
+
+| Variável                        | Descrição                                                                                     | Default                          |
+|----------------------------------|------------------------------------------------------------------------------------------------|-----------------------------------|
+| `OTEL_SERVICE_NAME`              | Nome do serviço exibido nas métricas/traces.                                                    | `users-api`                       |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`    | Endpoint OTLP (gRPC) do coletor/Jaeger. **Se ausente, os traces ficam desligados** (sem erro de exportador no log) — é o que mantém `dotnet run` funcionando sem Jaeger no ar. | *(não definida)*                  |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`    | Protocolo do exportador OTLP.                                                                    | `grpc`                             |
+
+> Com o ecossistema completo (`docker compose up`, repositório `orchestration`), o Jaeger fica disponível em `http://localhost:16686` e o Prometheus em `http://localhost:9090/targets`.
+
+---
+
+## 11. Testes
 
 Execute toda a suíte de testes:
 
@@ -364,7 +397,7 @@ docker exec fcg-mongodb mongosh "mongodb://localhost:27017/usersdb?directConnect
 
 ---
 
-## 11. Como contribuir
+## 12. Como contribuir
 
 1. **Pegue/assigne uma issue** antes de começar.
 2. **Crie um branch** a partir de `main`, no padrão:
@@ -397,7 +430,7 @@ docker exec fcg-mongodb mongosh "mongodb://localhost:27017/usersdb?directConnect
 
 ---
 
-## 12. Deploy de versão
+## 13. Deploy de versão
 
 O versionamento segue **SemVer**, com tags no formato `vX.Y.Z`.
 
@@ -428,7 +461,7 @@ O versionamento segue **SemVer**, com tags no formato `vX.Y.Z`.
 
 ---
 
-## 13. Kubernetes
+## 14. Kubernetes
 
 Os manifests vivem em `k8s/`:
 
@@ -449,7 +482,7 @@ kubectl apply -f k8s/configmap.yaml -f k8s/secret.yaml -f k8s/deployment.yaml -f
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 - **RabbitMQ indisponível na inicialização** — o MassTransit é resiliente e **reconecta automaticamente** quando o broker volta. A API sobe normalmente; mensagens são publicadas assim que a conexão é restabelecida. Verifique `RabbitMq__Host`, `RabbitMq__Username` e `RabbitMq__Password`.
 

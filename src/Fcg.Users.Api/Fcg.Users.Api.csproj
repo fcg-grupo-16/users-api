@@ -17,6 +17,17 @@
     <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
     <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
     <PackageReference Include="Serilog.Enrichers.CorrelationId" Version="3.0.1" />
+
+    <!-- Observabilidade (Fase 3) — OpenTelemetry: métricas em formato Prometheus + traces OTLP.
+         O exportador Prometheus para ASP.NET Core só tem release -beta (é o estado do pacote no
+         upstream, não um descuido nosso): a API de métricas do OTel é estável, só o exportador
+         segue marcado como beta. Versão PINADA, como o restante do repo. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.18.0-beta.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
   </ItemGroup>
 
   <ItemGroup>
