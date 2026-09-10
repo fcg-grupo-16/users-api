@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Threading.RateLimiting;
+using Fcg.Users.Api.Extensions;
 using Fcg.Users.Api.Middlewares;
 using Fcg.Users.Application.Validators;
 using Fcg.Users.Infrastructure.Extensions;
@@ -31,6 +32,9 @@ try
     builder.Services.AddInfrastructureServices();
     builder.Services.AddApplicationServices();
     builder.Services.AddMessaging(builder.Configuration);
+
+    // Observabilidade (Fase 3): métricas Prometheus em /metrics + traces OTLP.
+    builder.Services.AddObservability(builder.Configuration, builder.Environment);
 
     // Conexão RabbitMQ ÚNICA e reutilizada pelo health check. Antes o AddRabbitMQ abria uma conexão
     // nova a cada readiness sem fechá-la (leak que saturava o broker). A factory cria a conexão UMA
@@ -142,7 +146,42 @@ try
 
     app.UseMiddleware<CorrelationIdMiddleware>();
     app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
-    app.UseSerilogRequestLogging();
+
+    // Injeta TraceId/SpanId no contexto do Serilog: é o que permite pular de um span lento no
+    // Jaeger para as linhas de log exatas daquele request (e vice-versa).
+    app.Use(async (context, next) =>
+    {
+        var activity = System.Diagnostics.Activity.Current;
+        if (activity is not null)
+        {
+            using (Serilog.Context.LogContext.PushProperty("TraceId", activity.TraceId.ToString()))
+            using (Serilog.Context.LogContext.PushProperty("SpanId", activity.SpanId.ToString()))
+            {
+                await next(context);
+                return;
+            }
+        }
+
+        await next(context);
+    });
+
+    app.UseSerilogRequestLogging(options =>
+    {
+        // Rebaixa para Verbose (fora do nível padrão) o log de request de endpoints de
+        // infraestrutura, que são chamados de segundos em segundos pelas probes e pelo Prometheus.
+        options.GetLevel = static (httpContext, elapsed, ex) =>
+        {
+            if (ex is not null || httpContext.Response.StatusCode >= 500)
+                return Serilog.Events.LogEventLevel.Error;
+
+            var path = httpContext.Request.Path.Value ?? string.Empty;
+            if (path.StartsWith("/health", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/metrics", StringComparison.OrdinalIgnoreCase))
+                return Serilog.Events.LogEventLevel.Verbose;
+
+            return Serilog.Events.LogEventLevel.Information;
+        };
+    });
 
     if (app.Environment.IsDevelopment())
     {
@@ -158,6 +197,12 @@ try
     app.UseAuthorization();
     app.UseRateLimiter();
     app.MapControllers();
+
+    // Endpoint de scrape do Prometheus. Deliberadamente SEM autenticação e NÃO exposto no API
+    // Gateway (orchestration#26 não cria rota para /metrics): só o Prometheus, de dentro do
+    // cluster, alcança este endereço.
+    app.MapPrometheusScrapingEndpoint();
+
     // Liveness: valida apenas se o processo responde HTTP.
     app.MapHealthChecks("/health/live", new HealthCheckOptions
     {

@@ -2,8 +2,8 @@ using Xunit;
 
 namespace Fcg.Users.IntegrationTests.Infrastructure;
 
-[CollectionDefinition(Name, DisableParallelization = true)]
+[CollectionDefinition(nameof(IntegrationTestCollection), DisableParallelization = true)]
 public sealed class IntegrationTestCollection : ICollectionFixture<FcgWebAppFactory>
 {
-    public const string Name = "users-api-integration";
+    public const string Name = nameof(IntegrationTestCollection);
 }
