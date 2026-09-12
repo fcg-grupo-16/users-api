@@ -17,6 +17,7 @@
     <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
     <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
     <PackageReference Include="Serilog.Enrichers.CorrelationId" Version="3.0.1" />
+    <PackageReference Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
 
     <!-- Observabilidade (Fase 3) — OpenTelemetry: métricas em formato Prometheus + traces OTLP.
          O exportador Prometheus para ASP.NET Core só tem release -beta (é o estado do pacote no

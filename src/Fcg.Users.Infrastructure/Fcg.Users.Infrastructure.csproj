@@ -15,6 +15,13 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageReference Include="MassTransit" Version="8.5.10" />
     <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.10" />
+    <!-- Cache distribuído (Fase 3). Usamos as DUAS coisas que o enunciado cita:
+      IDistributedCache (abstração do ASP.NET Core) para get/set, e StackExchange.Redis
+      diretamente para o INCR atômico do contador de geração — que a abstração não expõe.
+      StackExchange.Redis PINADO na 2.x: é a linha contra a qual o pacote da Microsoft foi
+      compilado (ele exige >= 2.7.27). Subir para a 3.x sem testar pode dar quebra de API. -->
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.12" />
+    <PackageReference Include="StackExchange.Redis" Version="2.13.17" />
   </ItemGroup>
 
   <ItemGroup>

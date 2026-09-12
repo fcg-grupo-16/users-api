@@ -7,6 +7,7 @@ using Fcg.Users.IntegrationTests.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using RabbitMQ.Client;
+using StackExchange.Redis;
 
 namespace Fcg.Users.IntegrationTests;
 
@@ -78,6 +79,42 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
             CreateBearer(loginAdmin.Token));
 
         obterRemovidoResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ObterUsuario_UsaCache_EAtualizarInvalidaChaveDoItem()
+    {
+        var email = $"cache-{Guid.NewGuid():N}@it.local";
+        var cadastro = await _client.PostAsJsonAsync("/api/v1/usuarios", new
+        {
+            nome = "Usuario Cache",
+            email,
+            senha = "Senha@1234"
+        });
+
+        cadastro.StatusCode.Should().Be(HttpStatusCode.Created);
+        var usuario = await ReadAsAsync<UsuarioResponse>(cadastro);
+        var login = await LoginAsync(email, "Senha@1234");
+        var authorization = CreateBearer(login.Token);
+
+        var primeiraLeitura = await _client.GetAsync($"/api/v1/usuarios/{usuario.Id}", authorization);
+        primeiraLeitura.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await using var redis = await ConnectionMultiplexer.ConnectAsync(factory.RedisConnectionString);
+        var database = redis.GetDatabase();
+        var cacheKey = $"fcg:users:usuario:{usuario.Id}";
+        (await database.KeyExistsAsync(cacheKey)).Should().BeTrue();
+
+        var segundaLeitura = await _client.GetAsync($"/api/v1/usuarios/{usuario.Id}", authorization);
+        segundaLeitura.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var atualizacao = await _client.PutAsJsonAsync(
+            $"/api/v1/usuarios/{usuario.Id}",
+            new { nome = "Usuario Cache Atualizado", email },
+            authorization);
+
+        atualizacao.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await database.KeyExistsAsync(cacheKey)).Should().BeFalse();
     }
 
     [Fact]
