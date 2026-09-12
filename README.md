@@ -100,17 +100,46 @@ Dessa forma, a Application publica eventos (como o `UserCreatedEvent`) sem conhe
 services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
 ```
 
-### Cache de usuários e evolução do `IUsuarioService`
+### Cache distribuído (Redis)
 
-As leituras de usuários são decoradas por `CachedUsuarioService`, que usa Redis quando habilitado
-e invalida o item e/ou o grupo de listagens após cada escrita. O decorator é parte do contrato da
-aplicação: sempre que um método novo for adicionado a `IUsuarioService`, ele também deve ser
-implementado no `CachedUsuarioService`, com a invalidação de cache adequada. Delegar o método
-somente ao serviço interno pode deixar dados obsoletos no cache.
+As leituras de usuários são decoradas por `CachedUsuarioService` e armazenadas no Redis quando
+`Redis:Enabled=true` e há uma connection string configurada. O cache cobre:
 
-O cache é **fail-open**: se a leitura do cache falhar, a requisição segue para o MongoDB; a falha
-do Redis não deve resultar em erro `500` para o usuário. A implementação de cache também registra
-a falha em log `Warning`.
+- **Usuário por ID:** respostas de `GET /api/v1/usuarios/{id}`, na chave lógica
+   `usuario:{id}`.
+- **Listagens paginadas:** respostas de `GET /api/v1/usuarios`, na chave lógica
+   `usuarios:lista:g{geracao}:p{pagina}:t{tamanho}`.
+
+As chaves recebem o prefixo configurado em `Redis:InstanceName` (por padrão, `fcg:users:`),
+isolando o keyspace deste serviço quando o Redis é compartilhado com outros microsserviços.
+
+Os TTLs são diferentes conforme o tipo de dado:
+
+| Dado | TTL | Motivo |
+|------|-----|--------|
+| Usuário por ID | 5 minutos | É invalidado diretamente após atualização ou remoção. |
+| Listagem paginada | 30 segundos | Pode ter várias combinações de página e tamanho; o TTL curto limita a janela de dados obsoletos. |
+
+#### Invalidação por geração
+
+A listagem não é invalidada varrendo o Redis com `KEYS` ou `SCAN`. Cada chave contém a geração
+atual do grupo `usuarios`. Quando um usuário é criado, atualizado ou removido, o serviço incrementa
+atomicamente `fcg:users:gen:usuarios`. As chaves da geração anterior deixam de ser consultadas e
+expiram pelo TTL ou pela política de evicção do Redis.
+
+- **Criar:** incrementa a geração das listagens.
+- **Atualizar:** remove `usuario:{id}` e incrementa a geração das listagens.
+- **Remover:** remove `usuario:{id}` e incrementa a geração das listagens.
+
+O cache é **fail-open**: se a leitura, gravação, remoção ou invalidação do Redis falhar, a API
+continua operando com o MongoDB e registra a falha em log `Warning`; uma falha do Redis não deve
+resultar em erro `500` para o usuário. Sem connection string ou com `Redis:Enabled=false`,
+`NoOpCacheService` mantém o comportamento sem cache.
+
+> **Ponto de atenção:** o decorator faz parte do contrato da aplicação. Sempre que um método novo
+> for adicionado a `IUsuarioService`, ele também deve ser implementado no `CachedUsuarioService`,
+> com a invalidação de cache adequada. Delegar o método somente ao serviço interno pode deixar
+> dados obsoletos no cache.
 
 ### Transactional Outbox com MongoDB
 
