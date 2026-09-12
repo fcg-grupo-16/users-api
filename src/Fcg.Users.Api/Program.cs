@@ -37,6 +37,7 @@ try
 
     // Observabilidade (Fase 3): métricas Prometheus em /metrics + traces OTLP.
     builder.Services.AddObservability(builder.Configuration, builder.Environment);
+    builder.Services.AddGatewayForwardedHeaders(builder.Configuration);
 
     // Conexão RabbitMQ ÚNICA e reutilizada pelo health check. Antes o AddRabbitMQ abria uma conexão
     // nova a cada readiness sem fechá-la (leak que saturava o broker). A factory cria a conexão UMA
@@ -152,6 +153,12 @@ try
     });
 
     var app = builder.Build();
+
+    // PRIMEIRO middleware do pipeline, antes de qualquer outro. Ele reescreve
+    // Connection.RemoteIpAddress / Request.Scheme / Request.Host; tudo que roda antes dele veria
+    // os valores do proxy (IP do pod do Kong) em vez dos do cliente real. Em particular o
+    // CorrelationIdMiddleware, o Serilog request logging e o rate limiter dependem disso.
+    app.UseForwardedHeaders();
 
     app.UseMiddleware<CorrelationIdMiddleware>();
     app.UseMiddleware<GlobalExceptionHandlerMiddleware>();

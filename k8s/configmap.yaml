@@ -12,3 +12,7 @@ data:
   JwtSettings__Audience: "FiapCloudGames"
   JwtSettings__ExpiracaoEmMinutos: "15"
   JwtSettings__RefreshTokenExpiracaoEmDias: "7"
+  ForwardedHeaders__Enabled: "true"
+  ForwardedHeaders__KnownNetworks__0: "10.244.0.0/16"
+  ForwardedHeaders__KnownNetworks__1: "10.96.0.0/12"
+  ForwardedHeaders__ForwardLimit: "1"
