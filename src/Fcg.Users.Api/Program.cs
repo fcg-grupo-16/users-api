@@ -8,6 +8,7 @@ using Fcg.Users.Infrastructure.Seed;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
+using StackExchange.Redis;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -28,6 +29,7 @@ try
     builder.Services.AddValidatorsFromAssemblyContaining<CriarUsuarioValidator>();
 
     builder.Services.AddMongoDb(builder.Configuration);
+    builder.Services.AddDistributedCaching(builder.Configuration);
     builder.Services.AddJwtAuthentication(builder.Configuration);
     builder.Services.AddInfrastructureServices();
     builder.Services.AddApplicationServices();
@@ -91,7 +93,14 @@ try
                 }
             },
             name: "rabbitmq",
-            tags: ["ready"]);
+            tags: ["ready"])
+        .AddRedis(
+            connectionMultiplexerFactory: static sp => sp.GetRequiredService<IConnectionMultiplexer>(),
+            name: "redis",
+            // ⚠️ tag "cache", NÃO "ready": o Redis é degradação, não indisponibilidade. Se
+            // entrasse em "ready", um Redis fora tiraria o pod do balanceador — o exato oposto
+            // do fail-open que o RedisCacheService implementa.
+            tags: ["cache"]);
 
     var loginPermitLimit = Math.Max(
         1,

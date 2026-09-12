@@ -100,6 +100,18 @@ Dessa forma, a Application publica eventos (como o `UserCreatedEvent`) sem conhe
 services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
 ```
 
+### Cache de usuários e evolução do `IUsuarioService`
+
+As leituras de usuários são decoradas por `CachedUsuarioService`, que usa Redis quando habilitado
+e invalida o item e/ou o grupo de listagens após cada escrita. O decorator é parte do contrato da
+aplicação: sempre que um método novo for adicionado a `IUsuarioService`, ele também deve ser
+implementado no `CachedUsuarioService`, com a invalidação de cache adequada. Delegar o método
+somente ao serviço interno pode deixar dados obsoletos no cache.
+
+O cache é **fail-open**: se a leitura do cache falhar, a requisição segue para o MongoDB; a falha
+do Redis não deve resultar em erro `500` para o usuário. A implementação de cache também registra
+a falha em log `Warning`.
+
 ### Transactional Outbox com MongoDB
 
 Para evitar o problema de *dual-write* entre MongoDB e RabbitMQ, o cadastro de usuário usa o **MongoDB Outbox** oficial do MassTransit (`MassTransit.MongoDb`).

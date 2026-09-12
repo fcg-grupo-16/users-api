@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Testcontainers.MongoDb;
 using Testcontainers.RabbitMq;
+using Testcontainers.Redis;
 
 namespace Fcg.Users.IntegrationTests.Infrastructure;
 
@@ -23,6 +24,8 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         .WithPassword(RabbitPassword)
         .Build();
 
+    private readonly RedisContainer _redis = new RedisBuilder("redis:7.4.1-alpine").Build();
+
     public string RabbitHost => "localhost";
 
     public ushort RabbitPort => _rabbit.GetMappedPublicPort(5672);
@@ -30,6 +33,8 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
     public string RabbitUsernameValue => RabbitUsername;
 
     public string RabbitPasswordValue => RabbitPassword;
+
+    public string RedisConnectionString => _redis.GetConnectionString();
 
     public Task StopRabbitMqAsync(CancellationToken ct = default) => _rabbit.StopAsync(ct);
 
@@ -39,6 +44,7 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
     {
         await _mongo.StartAsync();
         await _rabbit.StartAsync();
+        await _redis.StartAsync();
 
         _mongoConnectionString = _mongo.GetConnectionString();
     }
@@ -52,6 +58,8 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         builder.UseSetting("RabbitMq:Host", RabbitHost);
         builder.UseSetting("RabbitMq:Username", RabbitUsername);
         builder.UseSetting("RabbitMq:Password", RabbitPassword);
+        builder.UseSetting("Redis:ConnectionString", RedisConnectionString);
+        builder.UseSetting("Redis:Enabled", "true");
         builder.UseSetting("JwtSettings:SecretKey", "IntegrationTests_HmacSha256_Secret_Key_With_At_Least_32_Chars!");
         builder.UseSetting("RateLimiting:Login:PermitLimit", "200");
         builder.UseSetting("RateLimiting:Login:WindowSeconds", "60");
@@ -60,6 +68,7 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
     async Task IAsyncLifetime.DisposeAsync()
     {
         await _rabbit.DisposeAsync();
+        await _redis.DisposeAsync();
         await _mongo.DisposeAsync();
         await DisposeAsync();
     }
