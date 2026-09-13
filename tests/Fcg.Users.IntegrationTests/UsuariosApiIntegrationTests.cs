@@ -218,6 +218,75 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    [Fact(DisplayName = "Com ForwardedHeaders habilitado, o rate limit de login particiona pelo IP real do cliente")]
+    public async Task RateLimit_ParticionaPeloIpRealDoCliente()
+    {
+        using var forwardedHeadersFactory = CreateRateLimitedFactory(
+            permitLimit: 5,
+            windowSeconds: 60,
+            forwardedHeadersEnabled: true);
+        using var client = forwardedHeadersFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        for (var tentativa = 1; tentativa <= 5; tentativa++)
+        {
+            var response = await PostLoginAsync(
+                client,
+                "naoexiste@email.com",
+                "errada",
+                forwardedFor: "203.0.113.10");
+
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        var blockedResponse = await PostLoginAsync(
+            client,
+            "naoexiste@email.com",
+            "errada",
+            forwardedFor: "203.0.113.10");
+        blockedResponse.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+
+        var separateBucketResponse = await PostLoginAsync(
+            client,
+            "naoexiste@email.com",
+            "errada",
+            forwardedFor: "203.0.113.99");
+        separateBucketResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact(DisplayName = "Sem ForwardedHeaders habilitado, X-Forwarded-For é ignorado")]
+    public async Task ForwardedHeaders_Desabilitado_IgnoraHeaderDoCliente()
+    {
+        using var forwardedHeadersFactory = CreateRateLimitedFactory(
+            permitLimit: 5,
+            windowSeconds: 60,
+            forwardedHeadersEnabled: false);
+        using var client = forwardedHeadersFactory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        for (var tentativa = 1; tentativa <= 5; tentativa++)
+        {
+            var response = await PostLoginAsync(
+                client,
+                "naoexiste@email.com",
+                "errada",
+                forwardedFor: $"203.0.113.{tentativa}");
+
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        var blockedResponse = await PostLoginAsync(
+            client,
+            "naoexiste@email.com",
+            "errada",
+            forwardedFor: "203.0.113.99");
+        blockedResponse.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+    }
+
     [Fact]
     public async Task Health_NaoDeveSerAfetadoPelaPoliticaDeLogin()
     {
@@ -364,22 +433,36 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         return await connectionFactory.CreateConnectionAsync();
     }
 
-    private WebApplicationFactory<Program> CreateRateLimitedFactory(int permitLimit, int windowSeconds)
+    private WebApplicationFactory<Program> CreateRateLimitedFactory(
+        int permitLimit,
+        int windowSeconds,
+        bool forwardedHeadersEnabled = false)
     {
         return factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("RateLimiting:Login:PermitLimit", permitLimit.ToString());
             builder.UseSetting("RateLimiting:Login:WindowSeconds", windowSeconds.ToString());
+            builder.UseSetting("ForwardedHeaders:Enabled", forwardedHeadersEnabled.ToString());
+            builder.UseSetting("ForwardedHeaders:KnownNetworks:0", "127.0.0.1/32");
+            builder.UseSetting("ForwardedHeaders:KnownNetworks:1", "::1/128");
         });
     }
 
-    private static Task<HttpResponseMessage> PostLoginAsync(HttpClient client, string email, string senha)
+    private static async Task<HttpResponseMessage> PostLoginAsync(
+        HttpClient client,
+        string email,
+        string senha,
+        string? forwardedFor = null)
     {
-        return client.PostAsJsonAsync("/api/v1/auth/login", new
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
-            email,
-            senha
-        });
+            Content = JsonContent.Create(new { email, senha })
+        };
+
+        if (forwardedFor is not null)
+            request.Headers.TryAddWithoutValidation("X-Forwarded-For", forwardedFor);
+
+        return await client.SendAsync(request);
     }
 
     private async Task<IConnection> CreateRabbitConnectionWithRetryAsync(TimeSpan timeout)

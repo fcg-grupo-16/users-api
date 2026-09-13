@@ -202,6 +202,9 @@ A configuração padrão vive em `src/Fcg.Users.Api/appsettings.json`. Qualquer 
 | `RabbitMq__Host`                      | Host do RabbitMQ.                                               | `localhost`                              |
 | `RabbitMq__Username`                  | Usuário do RabbitMQ.                                            | `guest`                                  |
 | `RabbitMq__Password`                  | Senha do RabbitMQ.                                              | `guest`                                  |
+| `ForwardedHeaders__Enabled`            | Processa `X-Forwarded-*` quando a API está atrás de um proxy confiável. | `false`                         |
+| `ForwardedHeaders__KnownNetworks__0`   | Primeiro CIDR autorizado a enviar headers encaminhados.         | *(vazio em dev)*                         |
+| `ForwardedHeaders__ForwardLimit`       | Número de proxies confiáveis na cadeia.                         | `1`                                      |
 
 > **Nunca** comite segredos reais (chaves JWT de produção, senhas, strings de conexão com credenciais) no repositório.
 
@@ -523,7 +526,41 @@ kubectl apply -f k8s/configmap.yaml -f k8s/secret.yaml -f k8s/deployment.yaml -f
 
 ---
 
-## 15. Troubleshooting
+## 15. Operação atrás do API Gateway
+
+Em produção, o UsersAPI recebe tráfego pelo Kong. O middleware `ForwardedHeaders` deve ser
+habilitado **somente** no ConfigMap do Kubernetes e deve confiar apenas nos CIDRs das redes do
+cluster. O `ForwardLimit` permanece em `1`, pois há um único proxy na frente da API.
+
+> **Aviso de segurança:** `X-Forwarded-For` é um header controlado pelo cliente até que a requisição
+> chegue de um proxy confiável. Nunca habilite `ForwardedHeaders__Enabled` com `KnownNetworks` vazio
+> ou com uma rede ampla sem validar a topologia do cluster: um cliente poderia trocar o header em
+> cada tentativa e escapar do rate limit de login. Os CIDRs devem ser conferidos no cluster real e
+> mantidos no ConfigMap do deploy.
+
+O Swagger não é roteado pelo gateway. Para acessá-lo em um pod com `ASPNETCORE_ENVIRONMENT=Development`,
+faça port-forward diretamente para o Service do UsersAPI:
+
+```bash
+kubectl -n fcg port-forward svc/users-api 8081:80
+```
+
+Depois acesse `http://localhost:8081/swagger`. O `X-Forwarded-Proto` só é relevante para as URLs
+geradas quando a requisição passa pelo proxy; o acesso ao Swagger por port-forward é direto ao
+Service e não precisa do gateway.
+
+Para confirmar a rede antes de preencher o ConfigMap, consulte os pods, o CIDR do cluster e o IP do
+Kong:
+
+```bash
+kubectl -n fcg get pods -o wide
+kubectl cluster-info dump | grep -m1 cluster-cidr
+kubectl -n kong get pod -l app.kubernetes.io/name=kong -o jsonpath='{.items[0].status.podIP}'
+```
+
+---
+
+## 16. Troubleshooting
 
 - **RabbitMQ indisponível na inicialização** — o MassTransit é resiliente e **reconecta automaticamente** quando o broker volta. A API sobe normalmente; mensagens são publicadas assim que a conexão é restabelecida. Verifique `RabbitMq__Host`, `RabbitMq__Username` e `RabbitMq__Password`.
 
