@@ -18,7 +18,8 @@ public sealed class ForwardedHeadersSettings
     /// Redes (CIDR) das quais os headers são aceitos. Devem ser as redes do cluster onde o Kong
     /// roda — ex.: <c>10.244.0.0/16</c> (pods do minikube) e <c>10.96.0.0/12</c> (Services).
     /// Lista vazia = confia em qualquer origem: aceitável apenas em ambiente fechado de demo, e
-    /// registrado no log como aviso no startup.
+    /// registrado como <c>Warning</c> no startup. Entradas malformadas são ignoradas
+    /// individualmente, também com <c>Warning</c> — nenhuma das duas situações derruba o processo.
     /// </summary>
     public string[] KnownNetworks { get; init; } = [];
 
