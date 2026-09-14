@@ -6,6 +6,7 @@ using Fcg.Users.Application.Interfaces;
 using Fcg.Users.Domain.Entities;
 using Fcg.Users.Domain.Exceptions;
 using Fcg.Users.Domain.Repositories;
+using Fcg.Users.Domain.ValueObjects;
 
 namespace Fcg.Users.Application.Services;
 
@@ -17,7 +18,32 @@ public sealed class AuthService(
 {
     public async Task<TokenResponseDto> LoginAsync(LoginRequestDto dto, CancellationToken ct = default)
     {
-        var usuario = await usuarioRepository.ObterPorEmailAsync(dto.Email.Trim().ToLowerInvariant(), ct);
+        // FORMATO INVÁLIDO É CREDENCIAL INVÁLIDA, e a validação acontece AQUI — antes do repositório.
+        //
+        // O validador do DTO usa `.EmailAddress()` do FluentValidation, que é mais permissivo que o
+        // regex do value object: `a@b` (sem TLD) e `x y@fcg.com` (com espaço) passam por ele e
+        // reprovam no `Email`. Antes, essa string crua descia até o repositório e o `new Email(...)`
+        // lançava DENTRO da expressão LINQ; o EF embrulhava a ValidacaoException num
+        // InvalidOperationException, o middleware não reconhecia o tipo externo e devolvia **500**.
+        //
+        // Devolver CredenciaisInvalidasException mantém a resposta INDISTINGUÍVEL de um e-mail
+        // inexistente — é o mesmo cuidado contra enumeração que
+        // LoginAsync_MesmaExcecaoParaEmailInexistenteESenhaErrada já protege — e tira o 5xx da taxa
+        // de erro do serviço, que é o sinal usado para alarme (issue #28).
+        Email email;
+
+        try
+        {
+            email = new Email(dto.Email);
+        }
+        catch (ValidacaoException)
+        {
+            throw new CredenciaisInvalidasException();
+        }
+
+        // O construtor de Email já faz Trim + ToLowerInvariant; normalizar de novo aqui seria
+        // duplicar a regra em dois lugares.
+        var usuario = await usuarioRepository.ObterPorEmailAsync(email.Endereco, ct);
 
         if (usuario is null || !passwordHasher.Verify(dto.Senha, usuario.SenhaHash))
         {

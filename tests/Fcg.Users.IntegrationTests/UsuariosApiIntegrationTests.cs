@@ -186,6 +186,32 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         comTokenUsuarioComum.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    [Theory(DisplayName = "Login com e-mail malformado devolve 401, igual a e-mail inexistente")]
+    [InlineData("a@b")]
+    [InlineData("x y@fcg.com")]
+    public async Task Login_EmailMalformado_DeveRetornar401(string emailMalformado)
+    {
+        // Antes da #28 estas duas entradas devolviam 500: elas passam pelo validador do DTO e
+        // reprovam no value object, e a ValidacaoException saía embrulhada de dentro do LINQ.
+        var resposta = await PostLoginAsync(_client, emailMalformado, "Senha@1234");
+
+        resposta.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact(DisplayName = "Malformado e inexistente são indistinguíveis pela resposta")]
+    public async Task Login_MalformadoEInexistente_TemRespostaIdentica()
+    {
+        var malformado = await PostLoginAsync(_client, "a@b", "Senha@1234");
+        var inexistente = await PostLoginAsync(_client, $"nao-existe-{Guid.NewGuid():N}@fcg.com", "Senha@1234");
+
+        malformado.StatusCode.Should().Be(inexistente.StatusCode);
+
+        // O corpo também: status igual com mensagem diferente continua sendo oráculo de enumeração.
+        var corpoMalformado = await malformado.Content.ReadAsStringAsync();
+        var corpoInexistente = await inexistente.Content.ReadAsStringAsync();
+        corpoMalformado.Should().Be(corpoInexistente);
+    }
+
     [Fact]
     public async Task Login_AcimaDoLimite_DeveRetornar429()
     {
