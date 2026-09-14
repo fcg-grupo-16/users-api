@@ -168,8 +168,6 @@ try
     app.UseForwardedHeaders();
 
     app.UseMiddleware<CorrelationIdMiddleware>();
-    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
-
     // Injeta TraceId/SpanId no contexto do Serilog: é o que permite pular de um span lento no
     // Jaeger para as linhas de log exatas daquele request (e vice-versa).
     app.Use(async (context, next) =>
@@ -188,6 +186,18 @@ try
         await next(context);
     });
 
+    // O REQUEST-LOGGING FICA FORA DO HANDLER DE EXCEÇÃO, e a ordem aqui é o conserto da #29.
+    //
+    // Registrado DEPOIS, o Serilog virava o middleware INTERNO: a exceção escapava por ele antes de
+    // chegar ao handler, ele a via como não tratada e registrava nível `Error` com `StatusCode` 500 —
+    // enquanto o cliente recebia 409. Medido: 3 POSTs de e-mail duplicado respondiam 409 e produziam
+    // 3 linhas `Error` com "StatusCode":500, 1:1 com as requisições.
+    //
+    // Registrado ANTES, ele é o EXTERNO: o handler já traduziu o status e engoliu a exceção, então o
+    // request-logging observa 409 sem exceção e cai no nível Information do GetLevel abaixo.
+    //
+    // ⚠️ Ele precisa continuar DEPOIS do CorrelationIdMiddleware e do push de TraceId: invertê-los
+    // faria a linha de request perder o enriquecimento de correlação, que é o que liga o log ao trace.
     app.UseSerilogRequestLogging(options =>
     {
         // Rebaixa para Verbose (fora do nível padrão) o log de request de endpoints de
@@ -205,6 +215,8 @@ try
             return Serilog.Events.LogEventLevel.Information;
         };
     });
+
+    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 
     if (app.Environment.IsDevelopment())
     {

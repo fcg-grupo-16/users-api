@@ -212,6 +212,39 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
         corpoMalformado.Should().Be(corpoInexistente);
     }
 
+    [Fact(DisplayName = "Conflito de e-mail duplicado é logado como 409, e não como 500/Error")]
+    public async Task CriarUsuario_Duplicado_LogaStatusRespondido()
+    {
+        var email = $"dup-{Guid.NewGuid():N}@it.local";
+        var corpo = new { nome = "Dup", email, senha = "Senha@1234" };
+
+        (await _client.PostAsJsonAsync("/api/v1/usuarios", corpo)).StatusCode
+            .Should().Be(HttpStatusCode.Created);
+
+        factory.Log.Limpar();
+
+        var conflito = await _client.PostAsJsonAsync("/api/v1/usuarios", corpo);
+        conflito.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        // O que o CLIENTE recebe já estava certo antes da #29. O que estava errado era o log: o
+        // request-logging do Serilog era interno ao handler de exceção, via a exceção escapar e
+        // registrava Error/500 para uma requisição que respondeu 409.
+        var requisicoes = factory.Log.DeRequisicao("/api/v1/usuarios")
+            .Where(e => CapturaDeLog.StatusDe(e) is not null)
+            .ToList();
+
+        requisicoes.Should().NotBeEmpty("o request-logging precisa registrar a requisição");
+        requisicoes.Should().OnlyContain(e => CapturaDeLog.StatusDe(e) == 409);
+        requisicoes.Should().NotContain(e => e.Level >= Serilog.Events.LogEventLevel.Error);
+
+        // GUARDA CONTRA REGRESSÃO DE ORDEM: mover o request-logging para fora do handler é fácil de
+        // fazer errado — na primeira tentativa desta correção eu o deixei ANTES do push de TraceId, e
+        // a linha de request perdeu a correlação com o trace sem nenhum teste reclamar.
+        requisicoes.Should().OnlyContain(
+            e => e.Properties.ContainsKey("TraceId"),
+            "a linha de request precisa continuar correlacionada com o trace");
+    }
+
     [Fact]
     public async Task Login_AcimaDoLimite_DeveRetornar429()
     {
