@@ -4,6 +4,7 @@ using Fcg.Users.Application.DTOs.Request;
 using Fcg.Users.Application.DTOs.Response;
 using Fcg.Users.Application.Services;
 using Fcg.Users.Domain.Exceptions;
+using Fcg.Users.Infrastructure.Settings;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -85,6 +86,36 @@ public sealed class UsuariosController(
         var resultado = await usuarioService.ObterPorIdAsync(id, ct);
 
         return Ok(resultado);
+    }
+
+    /// <summary>
+    /// Obter o contato (e-mail) de um usuário — consumo SERVIÇO-A-SERVIÇO.
+    /// </summary>
+    /// <remarks>
+    /// Existe porque a <c>notifications-function</c> recebe apenas o <c>UserId</c> no
+    /// <c>PaymentProcessedEvent</c> e precisa de um endereço real para a confirmação de compra
+    /// (notifications-function#9). O <c>GET /api/v1/usuarios/{id}</c> não serve: ele exige token de
+    /// usuário e só permite ler o PRÓPRIO id, salvo administrador.
+    /// </remarks>
+    /// <param name="id">Identificador do usuário.</param>
+    /// <param name="ct">Token de cancelamento.</param>
+    /// <response code="200">Contato retornado.</response>
+    /// <response code="401">Token de serviço ausente ou inválido.</response>
+    /// <response code="403">Token válido, mas sem a role de serviço.</response>
+    /// <response code="404">Usuário não encontrado.</response>
+    [HttpGet("{id}/contato")]
+    [Authorize(AuthenticationSchemes = ServiceAuthSettings.Esquema, Policy = "ApenasServico")]
+    [ProducesResponseType(typeof(ContatoUsuarioResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ObterContato(string id, CancellationToken ct)
+    {
+        // SEM ValidarAcessoAoRecurso: um token de serviço não tem "próprio id". O que limita o
+        // alcance aqui é o DTO de um campo só, não a identidade do chamador.
+        var usuario = await usuarioService.ObterPorIdAsync(id, ct);
+
+        return Ok(new ContatoUsuarioResponseDto(usuario.Email));
     }
 
     /// <summary>

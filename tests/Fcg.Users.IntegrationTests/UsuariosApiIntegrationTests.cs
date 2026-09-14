@@ -245,6 +245,70 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
             "a linha de request precisa continuar correlacionada com o trace");
     }
 
+    [Fact(DisplayName = "Contato: token de SERVIÇO lê o e-mail de qualquer usuário")]
+    public async Task ObterContato_ComTokenDeServico_DeveRetornar200ComOEmail()
+    {
+        var email = $"contato-{Guid.NewGuid():N}@it.local";
+        var criado = await _client.PostAsJsonAsync("/api/v1/usuarios",
+            new { nome = "Contato", email, senha = "Senha@1234" });
+        criado.StatusCode.Should().Be(HttpStatusCode.Created);
+        var usuario = await ReadAsAsync<UsuarioResponse>(criado);
+
+        var requisicao = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/usuarios/{usuario.Id}/contato");
+        requisicao.Headers.Authorization =
+            new AuthenticationHeaderValue("Bearer", FcgWebAppFactory.GerarTokenDeServico());
+
+        var resposta = await _client.SendAsync(requisicao);
+
+        resposta.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var corpo = await resposta.Content.ReadAsStringAsync();
+        corpo.Should().Contain(email);
+
+        // MENOR SUPERFÍCIE: o DTO tem um campo só. Se alguém trocar por UsuarioResponseDto, nome,
+        // tipo e data de criação passariam a vazar para quem só precisa despachar um e-mail.
+        corpo.Should().NotContain("\"nome\"");
+        corpo.Should().NotContain("\"tipo\"");
+    }
+
+    [Fact(DisplayName = "Contato: sem token devolve 401")]
+    public async Task ObterContato_SemToken_DeveRetornar401()
+    {
+        var resposta = await _client.GetAsync("/api/v1/usuarios/507f1f77bcf86cd799439011/contato");
+
+        resposta.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact(DisplayName = "Contato: token de USUÁRIO comum não serve, nem o de administrador")]
+    public async Task ObterContato_ComTokenDeUsuario_NaoDeveAutorizar()
+    {
+        // ESTE é o teste que prova a separação: o token abaixo é válido para todo o resto da API,
+        // porém assinado com a chave dos USUÁRIOS. A política prende o esquema de serviço, então ele
+        // não passa — mesmo que alguém consiga forjar a role.
+        var email = $"comum-{Guid.NewGuid():N}@it.local";
+        await _client.PostAsJsonAsync("/api/v1/usuarios", new { nome = "Comum", email, senha = "Senha@1234" });
+        var login = await LoginAsync(email, "Senha@1234");
+
+        var requisicao = new HttpRequestMessage(HttpMethod.Get, "/api/v1/usuarios/507f1f77bcf86cd799439011/contato");
+        requisicao.Headers.Authorization = new AuthenticationHeaderValue("Bearer", login.Token);
+
+        var resposta = await _client.SendAsync(requisicao);
+
+        resposta.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
+    }
+
+    [Fact(DisplayName = "Contato: token de serviço SEM a role Servico é recusado")]
+    public async Task ObterContato_TokenDeServicoSemRole_DeveRecusar()
+    {
+        var requisicao = new HttpRequestMessage(HttpMethod.Get, "/api/v1/usuarios/507f1f77bcf86cd799439011/contato");
+        requisicao.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer", FcgWebAppFactory.GerarTokenDeServico(role: "Administrador"));
+
+        var resposta = await _client.SendAsync(requisicao);
+
+        resposta.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
+    }
+
     [Fact]
     public async Task Login_AcimaDoLimite_DeveRetornar429()
     {
