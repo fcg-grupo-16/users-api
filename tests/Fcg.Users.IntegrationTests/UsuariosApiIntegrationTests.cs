@@ -373,7 +373,9 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
             await setupChannel.QueueBindAsync(queueName, exchangeName, routingKey: string.Empty);
         }
 
-        await factory.StopRabbitMqAsync();
+        // PAUSA em vez de parar: parar republicaria as portas e mudaria a porta mapeada, e o bus
+        // do app — configurado no startup — ficaria apontando para a antiga. Ver FcgWebAppFactory.
+        await factory.PausarRabbitMqAsync();
 
         var email = $"outbox-{Guid.NewGuid():N}@it.local";
 
@@ -386,7 +388,7 @@ public sealed class UsuariosApiIntegrationTests(FcgWebAppFactory factory)
 
         cadastro.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        await factory.StartRabbitMqAsync();
+        await factory.RetomarRabbitMqAsync();
 
         await using var assertConnection = await CreateRabbitConnectionWithRetryAsync(TimeSpan.FromSeconds(30));
         await using var assertChannel = await assertConnection.CreateChannelAsync();

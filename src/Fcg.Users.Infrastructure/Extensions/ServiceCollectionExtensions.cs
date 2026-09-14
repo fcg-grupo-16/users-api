@@ -122,7 +122,21 @@ public static class ServiceCollectionExtensions
                 var host = configuration["RabbitMq:Host"] ?? "localhost";
                 var user = configuration["RabbitMq:Username"] ?? "guest";
                 var pass = configuration["RabbitMq:Password"] ?? "guest";
-                cfg.Host(host, "/", h => { h.Username(user); h.Password(pass); });
+                // Porta opcional (RabbitMq:Port) — permite porta dinâmica nos testes de integração;
+                // sem ela, usa a porta padrão do AMQP (5672). Mesmo contrato do catalog-api.
+                //
+                // Sem isto, o Testcontainers precisava de bind FIXO na 5672 e a suíte não rodava com
+                // a plataforma de pé no compose local — o app não teria como saber onde o container
+                // subiu. Medido: 18 de 25 testes falhavam em 1 ms cada, com "port is already
+                // allocated" (issue #27).
+                if (ushort.TryParse(configuration["RabbitMq:Port"], out var port))
+                {
+                    cfg.Host(host, port, "/", h => { h.Username(user); h.Password(pass); });
+                }
+                else
+                {
+                    cfg.Host(host, "/", h => { h.Username(user); h.Password(pass); });
+                }
                 cfg.ConfigureEndpoints(ctx);
             });
         });

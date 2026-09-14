@@ -64,6 +64,12 @@ try
                     return current;
 
                 var configuration = sp.GetRequiredService<IConfiguration>();
+                // Respeita RabbitMq:Port (porta dinâmica nos testes; 5672 em compose/k8s).
+                // Sem isto o health check iria à 5672 enquanto o bus fala com a porta mapeada,
+                // e o readiness reportaria 503 com o broker perfeitamente no ar (issue #27).
+                var rabbitPort = ushort.TryParse(configuration["RabbitMq:Port"], out var parsedPort)
+                    ? parsedPort
+                    : (ushort)5672;
                 await healthRabbitLock.WaitAsync();
                 try
                 {
@@ -81,6 +87,7 @@ try
                     var created = await new RabbitMQ.Client.ConnectionFactory
                     {
                         HostName = configuration["RabbitMq:Host"] ?? "localhost",
+                        Port = rabbitPort,
                         UserName = configuration["RabbitMq:Username"] ?? "guest",
                         Password = configuration["RabbitMq:Password"] ?? "guest",
                         AutomaticRecoveryEnabled = true

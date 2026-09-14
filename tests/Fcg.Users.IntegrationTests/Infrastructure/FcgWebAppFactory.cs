@@ -18,8 +18,12 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         .WithReplicaSet("rs0")
         .Build();
 
+    // Sem bind fixo de porta: usa o mapeamento dinâmico do Testcontainers. Com `.WithPortBinding(
+    // 5672, 5672)` a suíte NÃO rodava com a plataforma de pé no compose local — o `fcg-rabbitmq` já
+    // publica 0.0.0.0:5672 e o Docker recusa o segundo bind. Medido: 18 de 25 testes falhando em
+    // 1 ms cada, sem que nenhum chegasse a executar, porque a fixture nunca era construída (#27).
+    // A porta é injetada em RabbitMq:Port no ConfigureWebHost.
     private readonly RabbitMqContainer _rabbit = new RabbitMqBuilder("rabbitmq:3-management")
-        .WithPortBinding(5672, 5672)
         .WithUsername(RabbitUsername)
         .WithPassword(RabbitPassword)
         .Build();
@@ -36,9 +40,30 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
 
     public string RedisConnectionString => _redis.GetConnectionString();
 
-    public Task StopRabbitMqAsync(CancellationToken ct = default) => _rabbit.StopAsync(ct);
+    /// <summary>Suspende o broker sem derrubar o container.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>PAUSA, e não <c>StopAsync</c>/<c>StartAsync</c> — a diferença é estrutural.</b> Ao PARAR e
+    /// subir de novo, o Docker republica as portas e a porta mapeada MUDA. Medido nesta máquina, em
+    /// ciclos consecutivos: 34696 → 34697 → 34698 → 34699 → 34700. O app já configurou o bus no
+    /// startup (<c>RabbitMq:Port</c>), então continuaria falando com a porta antiga e o teste do
+    /// outbox nunca veria a mensagem chegar.
+    /// </para>
+    /// <para>
+    /// Com <c>PauseAsync</c> o mapeamento é PRESERVADO — medido: estável em 34701 ao longo de três
+    /// ciclos de pausa/retomada — e o broker fica indisponível de verdade: o TCP ainda conecta, mas
+    /// o handshake AMQP não recebe um único byte e estoura por timeout (5 s), enquanto despausado
+    /// responde em 0,0 s. É o bastante para o publish não concluir, que é o que o teste exige.
+    /// </para>
+    /// <para>
+    /// ⚠️ A forma da falha muda: <c>StopAsync</c> fazia a conexão ser RECUSADA; a pausa faz a
+    /// conexão PENDURAR. Um cliente sem timeout bloquearia em vez de falhar rápido.
+    /// </para>
+    /// </remarks>
+    public Task PausarRabbitMqAsync(CancellationToken ct = default) => _rabbit.PauseAsync(ct);
 
-    public Task StartRabbitMqAsync(CancellationToken ct = default) => _rabbit.StartAsync(ct);
+    /// <summary>Retoma o broker, preservando a porta mapeada.</summary>
+    public Task RetomarRabbitMqAsync(CancellationToken ct = default) => _rabbit.UnpauseAsync(ct);
 
     public async Task InitializeAsync()
     {
@@ -56,6 +81,7 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         builder.UseSetting("MongoDbSettings:ConnectionString", _mongoConnectionString ?? _mongo.GetConnectionString());
         builder.UseSetting("MongoDbSettings:DatabaseName", _databaseName);
         builder.UseSetting("RabbitMq:Host", RabbitHost);
+        builder.UseSetting("RabbitMq:Port", RabbitPort.ToString());
         builder.UseSetting("RabbitMq:Username", RabbitUsername);
         builder.UseSetting("RabbitMq:Password", RabbitPassword);
         builder.UseSetting("Redis:ConnectionString", RedisConnectionString);
