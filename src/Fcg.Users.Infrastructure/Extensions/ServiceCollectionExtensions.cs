@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Fcg.Users.Application.Interfaces;
 using Fcg.Users.Application.Services;
@@ -48,7 +49,29 @@ public static class ServiceCollectionExtensions
 
         services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
 
-        services.AddAuthentication(options =>
+        // Credencial SERVIÇO-A-SERVIÇO, com chave PRÓPRIA — ver ServiceAuthSettings para o porquê.
+        //
+        // OPCIONAL de propósito. A configuração dela mora no repositório `orchestration`, e exigi-la
+        // aqui significaria que implantar esta imagem ANTES do manifesto derrubaria o serviço
+        // inteiro — trocar uma funcionalidade ausente por indisponibilidade total é péssimo negócio.
+        // Sem ela, apenas o endpoint de contato fica indisponível, respondendo 401 (ver abaixo).
+        var serviceAuth = configuration.GetSection(ServiceAuthSettings.SectionName).Get<ServiceAuthSettings>();
+
+        if (serviceAuth is not null)
+        {
+            if (string.Equals(serviceAuth.SecretKey, jwtSettings.SecretKey, StringComparison.Ordinal))
+            {
+                // AQUI sim vale derrubar o startup: subir com as chaves iguais desfaz a separação de
+                // privilégio em silêncio, e quem tiver o segredo do serviço assina um Administrador.
+                throw new InvalidOperationException(
+                    "ServiceAuth:SecretKey não pode ser igual a JwtSettings:SecretKey — a separação de "
+                    + "privilégio entre tokens de usuário e de serviço depende de chaves distintas.");
+            }
+
+            services.Configure<ServiceAuthSettings>(configuration.GetSection(ServiceAuthSettings.SectionName));
+        }
+
+        var autenticacao = services.AddAuthentication(options =>
         {
             options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
             options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -68,12 +91,58 @@ public static class ServiceCollectionExtensions
             };
         });
 
+        // O esquema é registrado SEMPRE, mesmo sem ServiceAuth configurado — e a diferença é o
+        // status que o endpoint devolve numa implantação incompleta.
+        //
+        // Medido: com a política apontando para um esquema AUSENTE, a aplicação sobe normalmente
+        // (`/` responde 200) mas o endpoint protegido devolve **500**. Ou seja, config faltando
+        // viraria 5xx contaminando a taxa de erro — o mesmo defeito que as #28 e #29 acabaram de
+        // consertar. Com o esquema registrado e uma chave que nada valida, a resposta é **401**,
+        // que é a semântica honesta: não há credencial de serviço configurada.
+        autenticacao.AddJwtBearer(ServiceAuthSettings.Esquema, options =>
+        {
+            options.TokenValidationParameters = serviceAuth is null
+                ? new TokenValidationParameters
+                {
+                    // Chave ALEATÓRIA por processo: nenhum token existente ou forjável valida.
+                    IssuerSigningKey = new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(64)),
+                    ValidIssuer = "__service-auth-nao-configurado__",
+                    ValidAudience = "__service-auth-nao-configurado__",
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ClockSkew = TimeSpan.Zero
+                }
+                : new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = serviceAuth.Issuer,
+                    ValidAudience = serviceAuth.Audience,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(serviceAuth.SecretKey)),
+                    ClockSkew = TimeSpan.Zero
+                };
+        });
+
         services.AddAuthorization(options =>
         {
             options.AddPolicy("ApenasAdmin", policy =>
                 policy.RequireRole("Administrador"));
             options.AddPolicy("UsuarioAutenticado", policy =>
                 policy.RequireAuthenticatedUser());
+
+            // A política PRENDE o esquema: sem AuthenticationSchemes, o esquema padrão (o dos
+            // usuários) também seria aceito, e um token de usuário com a role certa passaria.
+            // O esquema existe sempre (ver acima), então esta política nunca produz 500.
+            options.AddPolicy("ApenasServico", policy =>
+            {
+                policy.AuthenticationSchemes.Add(ServiceAuthSettings.Esquema);
+                policy.RequireAuthenticatedUser();
+                policy.RequireRole(ServiceAuthSettings.Role);
+            });
         });
 
         return services;

@@ -1,6 +1,10 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
 using Testcontainers.MongoDb;
 using Testcontainers.RabbitMq;
 using Testcontainers.Redis;
@@ -40,6 +44,33 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
     public string RabbitPasswordValue => RabbitPassword;
 
     public string RedisConnectionString => _redis.GetConnectionString();
+
+    /// <summary>Segredo do esquema de serviço nos testes — distinto do de usuários, de propósito.</summary>
+    public const string ServiceAuthSecretKey = "IntegrationTests_Service_HmacSha256_Key_With_At_Least_32_Chars!";
+
+    public const string ServiceAuthIssuer = "FiapCloudGames.Servicos";
+    public const string ServiceAuthAudience = "FiapCloudGames.Servicos";
+
+    /// <summary>
+    /// Emite um token de SERVIÇO, como a notifications-function fará.
+    /// </summary>
+    /// <param name="role">
+    /// Deixe o default para o caminho feliz. Passe outro valor para provar que a política recusa um
+    /// token de serviço válido porém sem a role certa.
+    /// </param>
+    public static string GerarTokenDeServico(string role = "Servico")
+    {
+        var chave = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ServiceAuthSecretKey));
+
+        var token = new JwtSecurityToken(
+            issuer: ServiceAuthIssuer,
+            audience: ServiceAuthAudience,
+            claims: [new Claim(ClaimTypes.Role, role)],
+            expires: DateTime.UtcNow.AddMinutes(5),
+            signingCredentials: new SigningCredentials(chave, SecurityAlgorithms.HmacSha256));
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
 
     /// <summary>Suspende o broker sem derrubar o container.</summary>
     /// <remarks>
@@ -94,6 +125,12 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         builder.UseSetting("Redis:ConnectionString", RedisConnectionString);
         builder.UseSetting("Redis:Enabled", "true");
         builder.UseSetting("JwtSettings:SecretKey", "IntegrationTests_HmacSha256_Secret_Key_With_At_Least_32_Chars!");
+
+        // Chave de SERVIÇO, obrigatoriamente distinta da dos usuários — o startup recusa se forem
+        // iguais, porque a separação de privilégio depende disso (notifications-function#9).
+        builder.UseSetting("ServiceAuth:SecretKey", ServiceAuthSecretKey);
+        builder.UseSetting("ServiceAuth:Issuer", ServiceAuthIssuer);
+        builder.UseSetting("ServiceAuth:Audience", ServiceAuthAudience);
         builder.UseSetting("RateLimiting:Login:PermitLimit", "200");
         builder.UseSetting("RateLimiting:Login:WindowSeconds", "60");
     }
