@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.MongoDb;
 using Testcontainers.RabbitMq;
 using Testcontainers.Redis;
@@ -74,9 +75,15 @@ public sealed class FcgWebAppFactory : WebApplicationFactory<Program>, IAsyncLif
         _mongoConnectionString = _mongo.GetConnectionString();
     }
 
+    /// <summary>Eventos de log emitidos pela aplicação durante o teste (issue #29).</summary>
+    public CapturaDeLog Log { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+
+        // O Program.cs configura `.ReadFrom.Services(services)`, então basta registrar o sink na DI.
+        builder.ConfigureServices(services => services.AddSingleton<Serilog.Core.ILogEventSink>(Log));
 
         builder.UseSetting("MongoDbSettings:ConnectionString", _mongoConnectionString ?? _mongo.GetConnectionString());
         builder.UseSetting("MongoDbSettings:DatabaseName", _databaseName);
