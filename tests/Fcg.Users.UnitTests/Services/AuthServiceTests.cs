@@ -134,6 +134,51 @@ public class AuthServiceTests
         exEmail.Which.Message.Should().Be(exSenha.Which.Message);
     }
 
+    [Theory(DisplayName = "E-mail malformado é credencial inválida, e não chega ao repositório")]
+    [InlineData("a@b")]
+    [InlineData("x y@fcg.com")]
+    [InlineData("sem-arroba")]
+    [InlineData("@fcg.com")]
+    public async Task LoginAsync_EmailMalformado_NaoConsultaRepositorio(string emailMalformado)
+    {
+        // Estas entradas passam pelo `.EmailAddress()` do FluentValidation (as duas primeiras) e
+        // reprovam no regex do value object. Antes da #28 elas desciam até o repositório, o
+        // `new Email(...)` lançava dentro da expressão LINQ e a resposta era 500.
+        var act = () => _service.LoginAsync(new LoginRequestDto(emailMalformado, "Senha@123"));
+
+        await act.Should().ThrowAsync<CredenciaisInvalidasException>();
+
+        // Não basta o status certo: um e-mail malformado não pode nem gerar ida ao banco.
+        _repositoryMock.Verify(
+            r => r.ObterPorEmailAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact(DisplayName = "Malformado, inexistente e senha errada produzem a MESMA mensagem")]
+    public async Task LoginAsync_MalformadoInexistenteESenhaErrada_MesmaMensagem()
+    {
+        // Estende o invariante anti-enumeração de LoginAsync_MesmaExcecaoParaEmailInexistenteESenhaErrada
+        // para o terceiro caso. Sem isto, o formato do e-mail vira um oráculo: quem sonda de fora
+        // distingue "malformado" de "não existe" pela resposta.
+        _repositoryMock.Setup(r => r.ObterPorEmailAsync("nao@existe.com", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Usuario?)null);
+
+        var usuario = CriarUsuario();
+        _repositoryMock.Setup(r => r.ObterPorEmailAsync("felipe@email.com", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(usuario);
+        _hasherMock.Setup(h => h.Verify("Errada@123", usuario.SenhaHash)).Returns(false);
+
+        var malformado = await ((Func<Task>)(() => _service.LoginAsync(new LoginRequestDto("a@b", "Senha@123"))))
+            .Should().ThrowAsync<CredenciaisInvalidasException>();
+        var inexistente = await ((Func<Task>)(() => _service.LoginAsync(new LoginRequestDto("nao@existe.com", "Senha@123"))))
+            .Should().ThrowAsync<CredenciaisInvalidasException>();
+        var senhaErrada = await ((Func<Task>)(() => _service.LoginAsync(new LoginRequestDto("felipe@email.com", "Errada@123"))))
+            .Should().ThrowAsync<CredenciaisInvalidasException>();
+
+        malformado.Which.Message.Should().Be(inexistente.Which.Message);
+        malformado.Which.Message.Should().Be(senhaErrada.Which.Message);
+    }
+
     [Fact]
     public async Task RefreshAsync_DeveRotacionarRefreshToken_QuandoTokenValido()
     {
