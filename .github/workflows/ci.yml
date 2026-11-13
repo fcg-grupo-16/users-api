@@ -35,3 +35,32 @@ jobs:
 
       - name: Test
         run: dotnet test -c Release --no-build
+
+      # --- Fase 4: containerização ---------------------------------------------------------------
+      # A tag é o SHA DO COMMIT, não `latest`. Tag móvel é a causa raiz de uma classe inteira de
+      # "deploy que não muda nada": a imagem nova não substitui a antiga e o pod segue servindo
+      # binário velho, com todo `kubectl get` dizendo que está tudo certo. Ver orchestration#40.
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build da imagem
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false                     # ainda não: registry é a Parte 2
+          tags: |
+            ${{ github.event.repository.name }}:${{ github.sha }}
+            ${{ github.event.repository.name }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true                      # carrega no daemon local, para o passo de smoke
+
+      # Prova que a imagem SOBE, não só que compila. Um Dockerfile que builda e um container que
+      # não inicia são coisas diferentes, e a segunda só aparece em produção.
+      - name: A imagem inicia?
+        run: |
+          docker run -d --name smoke ${{ github.event.repository.name }}:${{ github.sha }}
+          sleep 10
+          docker logs smoke
+          docker ps --filter name=smoke --filter status=running | grep -q smoke \
+            || { echo "::error::o container morreu nos primeiros 10s"; docker logs smoke; exit 1; }
