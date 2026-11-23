@@ -167,6 +167,16 @@ try
     // CorrelationIdMiddleware, o Serilog request logging e o rate limiter dependem disso.
     app.UseForwardedHeaders();
 
+    // Versão do binário em produção, visível na resposta (Fase 4, deploy ao vivo). É o que prova, de
+    // fora do cluster, que o rolling update trocou a imagem: a mudança de valor aparece no header de
+    // uma chamada comum, sem kubectl. Ao alterar o código para uma demonstração, mude este valor.
+    const string versaoDaApi = "fase4-v1";
+    app.Use(async (context, next) =>
+    {
+        context.Response.Headers["X-Fcg-Versao"] = versaoDaApi;
+        await next(context);
+    });
+
     app.UseMiddleware<CorrelationIdMiddleware>();
     // Injeta TraceId/SpanId no contexto do Serilog: é o que permite pular de um span lento no
     // Jaeger para as linhas de log exatas daquele request (e vice-versa).
