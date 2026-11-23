@@ -170,7 +170,7 @@ try
     // Versão do binário em produção, visível na resposta (Fase 4, deploy ao vivo). É o que prova, de
     // fora do cluster, que o rolling update trocou a imagem: a mudança de valor aparece no header de
     // uma chamada comum, sem kubectl. Ao alterar o código para uma demonstração, mude este valor.
-    const string versaoDaApi = "fase4-v1";
+    const string versaoDaApi = "fase4-v2";
     app.Use(async (context, next) =>
     {
         context.Response.Headers["X-Fcg-Versao"] = versaoDaApi;
